@@ -132,7 +132,7 @@ def create_argparser() -> argparse.ArgumentParser:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument(
         "--device",
-        choices=("auto", "cpu", "cuda"),
+        choices=("auto", "cpu", "cuda", "mps"),
         default="auto",
     )
 
@@ -153,10 +153,17 @@ def create_argparser() -> argparse.ArgumentParser:
 
 
 def select_device(requested_device: str) -> th.device:
+    mps_available = th.backends.mps.is_available()
     if requested_device == "auto":
-        return th.device("cuda" if th.cuda.is_available() else "cpu")
+        if th.cuda.is_available():
+            return th.device("cuda")
+        if mps_available:
+            return th.device("mps")
+        return th.device("cpu")
     if requested_device == "cuda" and not th.cuda.is_available():
         raise RuntimeError("CUDA was requested but is not available.")
+    if requested_device == "mps" and not mps_available:
+        raise RuntimeError("MPS was requested but is not available.")
     return th.device(requested_device)
 
 
