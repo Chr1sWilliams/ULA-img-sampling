@@ -8,3 +8,4 @@ wandb/
 
 # Output artifacts
 outputs/
+slurm/logs/
