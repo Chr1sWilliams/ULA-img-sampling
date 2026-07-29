@@ -1,0 +1,35 @@
+# ULA-img-sampling requirements (Apple Silicon / macOS, MPS)
+# Versions pinned to the known-good frozen env from the offline wandb run.
+#
+# SYSTEM DEPENDENCY (install BEFORE pip):
+#   brew install open-mpi        # provides libmpi, needed to build mpi4py
+#
+# Install order:
+#   python3 -m venv .venv && source .venv/bin/activate
+#   pip install -U pip wheel
+#   pip install -r requirements.txt
+#
+# torch/torchvision default pip wheels include Apple MPS support.
+
+# ---- Core: needed for UNCONDITIONAL (prior-only, --log_likelihood zero) ----
+torch==2.9.1
+torchvision==0.24.1
+numpy==2.2.6
+scipy==1.15.2
+blobfile==3.1.0
+mpi4py==4.1.1
+wandb==0.23.0
+matplotlib==3.10.8
+PyYAML==6.0.3
+pillow==12.0.0
+tqdm==4.67.3
+
+# ---- Interferometric extras: needed ONLY for CONDITIONAL (--log_likelihood interferometric) ----
+# Comment these out for the first (unconditional) run if you want a faster install.
+ehtim==1.2.10
+torchkbnufft==1.5.2
+astropy==6.1.7
+h5py==3.15.1
+scikit-image==0.25.2
+pandas==2.3.3
+networkx==3.4.2

@@ -1,0 +1,21 @@
+# pip-installed packages for the CONDA setup.
+# The binary-heavy packages (openmpi, mpi4py, numpy, scipy, astropy, h5py,
+# scikit-image, pandas, networkx) are installed by conda instead — see the
+# conda command in the setup notes. Do NOT list them here, or pip will rip out
+# conda's pre-built versions and try to rebuild them.
+#
+# Run AFTER creating/activating the conda env:
+#   pip install -r requirements-pip.txt
+
+# ---- Core: needed for UNCONDITIONAL (prior-only, --log_likelihood zero) ----
+torch==2.9.1
+torchvision==0.24.1
+blobfile==3.1.0
+wandb==0.23.0
+matplotlib==3.10.8
+PyYAML==6.0.3
+pillow==12.0.0
+
+# ---- Interferometric extras: needed ONLY for CONDITIONAL (--log_likelihood interferometric) ----
+torchkbnufft==1.5.2
+ehtim==1.2.10
