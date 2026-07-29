@@ -7,7 +7,13 @@ from torch.utils.data import DataLoader, Dataset
 
 
 def load_data(
-    *, data_dir, batch_size, image_size, class_cond=False, deterministic=False
+    *,
+    data_dir,
+    batch_size,
+    image_size,
+    image_channels=1,
+    class_cond=False,
+    deterministic=False,
 ):
     """
     For a dataset, create a generator over (images, kwargs) pairs.
@@ -20,6 +26,7 @@ def load_data(
     :param data_dir: a dataset directory.
     :param batch_size: the batch size of each returned pair.
     :param image_size: the size to which images are resized.
+    :param image_channels: 1 for grayscale images or 3 for RGB images.
     :param class_cond: if True, include a "y" key in returned dicts for class
                        label. If classes are not available and this is true, an
                        exception will be raised.
@@ -27,6 +34,8 @@ def load_data(
     """
     if not data_dir:
         raise ValueError("unspecified data directory")
+    if image_channels not in (1, 3):
+        raise ValueError("image_channels must be 1 (grayscale) or 3 (RGB)")
     all_files = _list_image_files_recursively(data_dir)
     classes = None
     if class_cond:
@@ -38,6 +47,7 @@ def load_data(
     dataset = ImageDataset(
         image_size,
         all_files,
+        image_channels=image_channels,
         classes=classes,
         shard=MPI.COMM_WORLD.Get_rank(),
         num_shards=MPI.COMM_WORLD.Get_size(),
@@ -67,9 +77,20 @@ def _list_image_files_recursively(data_dir):
 
 
 class ImageDataset(Dataset):
-    def __init__(self, resolution, image_paths, classes=None, shard=0, num_shards=1):
+    def __init__(
+        self,
+        resolution,
+        image_paths,
+        image_channels=1,
+        classes=None,
+        shard=0,
+        num_shards=1,
+    ):
         super().__init__()
         self.resolution = resolution
+        if image_channels not in (1, 3):
+            raise ValueError("image_channels must be 1 (grayscale) or 3 (RGB)")
+        self.image_channels = image_channels
         self.local_images = image_paths[shard:][::num_shards]
         self.local_classes = None if classes is None else classes[shard:][::num_shards]
 
@@ -82,7 +103,7 @@ class ImageDataset(Dataset):
             pil_image = Image.open(f)
             pil_image.load()
 
-        pil_image = pil_image.convert("L")#MNIST
+        pil_image = pil_image.convert("L" if self.image_channels == 1 else "RGB")
         
         # We are not on a new enough PIL to support the `reducing_gap`
         # argument, which uses BOX downsampling at powers of two first.
@@ -97,7 +118,9 @@ class ImageDataset(Dataset):
             tuple(round(x * scale) for x in pil_image.size), resample=Image.BICUBIC
         )
 
-        arr = np.array(pil_image.convert("RGB"))
+        arr = np.array(pil_image)
+        if self.image_channels == 1:
+            arr = arr[:, :, None]
         crop_y = (arr.shape[0] - self.resolution) // 2
         crop_x = (arr.shape[1] - self.resolution) // 2
         arr = arr[crop_y : crop_y + self.resolution, crop_x : crop_x + self.resolution]

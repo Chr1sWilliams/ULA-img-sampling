@@ -26,10 +26,14 @@ class DiffusionGuidance:
         device: th.device,
         log_likelihood: Optional[LogLikelihood] = None,
         img_size: int = 128,
+        img_channels: int = 1,
     ) -> None:
         self.img_size = int(img_size)
         if self.img_size <= 0:
             raise ValueError("img_size must be positive.")
+        self.img_channels = int(img_channels)
+        if self.img_channels not in (1, 3):
+            raise ValueError("img_channels must be 1 (grayscale) or 3 (RGB).")
         if log_likelihood is not None and not callable(log_likelihood):
             raise TypeError("log_likelihood must be callable or None.")
 
@@ -72,7 +76,10 @@ class DiffusionGuidance:
             num_res_blocks=2,
             num_channels=64,
         )
-        model, diffusion = create_model_and_diffusion(**model_config)
+        model, diffusion = create_model_and_diffusion(
+            **model_config,
+            in_channels=self.img_channels,
+        )
 
         model_path = os.environ.get("MODEL_PATH", "model/model300000.pt")
         beta_path = os.environ.get("BETA_PATH", "model/ddpm_betas300000.npy")

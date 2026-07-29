@@ -13,6 +13,7 @@ LIKELIHOOD_SPEC="${LIKELIHOOD_SPEC:-interferometric}"
 WANDB_MODE="${WANDB_MODE:-offline}"
 OUTPUT_DIR="${OUTPUT_DIR:-${PROJECT_DIR}/outputs}"
 RUN_NAME="${RUN_NAME:-eht_schedule_example}"
+IMAGE_CHANNELS="${IMAGE_CHANNELS:-1}"
 
 cd "${PROJECT_DIR}"
 
@@ -24,6 +25,7 @@ cd "${PROJECT_DIR}"
   --num_rounds 4 \
   --corrector_steps 3 \
   --num_samples 40 \
+  --image_channels "${IMAGE_CHANNELS}" \
   --initial_sigma 0.1 \
   --step_tail_probability 0.05 \
   --output_dir "${OUTPUT_DIR}" \

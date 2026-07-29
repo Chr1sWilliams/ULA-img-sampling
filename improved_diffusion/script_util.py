@@ -25,7 +25,7 @@ def model_and_diffusion_defaults():
         sigma_small=False,
         class_cond=False,
         diffusion_steps=1000,
-        noise_schedule="linear",
+        noise_schedule="cosine",
         timestep_respacing="",
         use_kl=False,
         predict_xstart=False,
@@ -118,7 +118,7 @@ def create_model(
     return UNetModel(
         in_channels=in_channels,
         model_channels=num_channels,
-        out_channels=(in_channels if not learn_sigma else 6),
+        out_channels=(in_channels if not learn_sigma else 2 * in_channels),
         num_res_blocks=num_res_blocks,
         attention_resolutions=tuple(attention_ds),
         dropout=dropout,

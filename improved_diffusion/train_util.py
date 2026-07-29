@@ -11,8 +11,6 @@ from torch.optim import AdamW
 
 from scipy import interpolate
 
-import torchvision.transforms as transforms
-
 from . import dist_util, logger
 from .fp16_util import (
     make_master_params,
@@ -74,8 +72,10 @@ class TrainLoop:
         schedule_sampler=None,
         weight_decay=0.0,
         lr_anneal_steps=0,
-        schedule_tune = False,
-        schedule_lr = 0.01,
+        schedule_tune=True,
+        schedule_lr=0.01,
+        image_size=128,
+        image_channels=1,
     ):
         self.model = model
         self.diffusion = diffusion
@@ -98,6 +98,10 @@ class TrainLoop:
         self.lr_anneal_steps = lr_anneal_steps
         self.schedule_tune = schedule_tune
         self.schedule_lr = schedule_lr
+        self.image_size = int(image_size)
+        self.image_channels = int(image_channels)
+        if self.image_channels not in (1, 3):
+            raise ValueError("image_channels must be 1 (grayscale) or 3 (RGB)")
 
         self.step = 0
         self.resume_step = 0
@@ -200,12 +204,6 @@ class TrainLoop:
             or self.step + self.resume_step < self.lr_anneal_steps
         ):
             batch, cond = next(self.data)
-            #####################################################################
-            to_gray = transforms.Grayscale(num_output_channels=1)
-            batch = to_gray(batch) #MNIST
-            # batch = th.log(batch + 2)
-            #####################################################################
-
             self.run_step(batch, cond)
             if self.step % self.log_interval == 0 and dist_util.dev() == th.device('cuda:0'):
                 # print(self.diffusion.D)
@@ -444,10 +442,22 @@ class TrainLoop:
                     #self.diffusion.update_schedule(stm1_xt,st_xt,stm1_xtm1,st_xtm1,t,tau=0.001,n_l_min=5)
                     self.diffusion.update_schedule(stm1_xt,st_xt,t,tau=self.schedule_lr,n_l_min=24)
 
-    def generate_samples(self, device = None, num_samples=9, image_size=128, class_cond=False, use_ddim=False):
+    def generate_samples(
+        self,
+        device=None,
+        num_samples=9,
+        image_size=None,
+        image_channels=None,
+        class_cond=False,
+        use_ddim=False,
+    ):
         
         if device is None:
             device = next(self.model.parameters()).device
+        if image_size is None:
+            image_size = self.image_size
+        if image_channels is None:
+            image_channels = self.image_channels
         
         model_kwargs = {}
         if class_cond:
@@ -457,10 +467,7 @@ class TrainLoop:
         sample_fn = self.diffusion.p_sample_loop if not use_ddim else self.diffusion.ddim_sample_loop
         samples = sample_fn(
             self.model,
-            #####################################################################
-            #(num_samples, 3, image_size, image_size), #for colour
-            (num_samples, 1, image_size, image_size), #MNIST
-            #####################################################################
+            (num_samples, image_channels, image_size, image_size),
             clip_denoised=True,
             model_kwargs=model_kwargs,
         )
