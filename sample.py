@@ -95,6 +95,13 @@ def create_argparser() -> argparse.ArgumentParser:
         default=40,
     )
     parser.add_argument("--image_size", type=int, default=128)
+    parser.add_argument(
+        "--image_channels",
+        type=int,
+        choices=(1, 3),
+        default=1,
+        help="Prior image channels: 1 for grayscale or 3 for RGB.",
+    )
     parser.add_argument("--initial_sigma", "--sigma0", type=float, default=0.1)
     parser.add_argument(
         "--step_tail_probability",
@@ -183,6 +190,14 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("step_tail_probability must lie strictly between 0 and 1.")
     if args.log_interval < 0:
         raise ValueError("log_interval must be non-negative.")
+    if (
+        args.image_channels != 1
+        and args.log_likelihood.strip().lower() in {"interferometric", "eht"}
+    ):
+        raise ValueError(
+            "The built-in interferometric likelihood requires "
+            "--image_channels 1."
+        )
 
 
 def build_run_name(args: argparse.Namespace) -> str:
@@ -256,7 +271,12 @@ def run_sampling_round(
     if device.type == "cuda":
         th.cuda.manual_seed_all(seed)
 
-    sample_shape = (num_samples, 1, guidance.img_size, guidance.img_size)
+    sample_shape = (
+        num_samples,
+        guidance.img_channels,
+        guidance.img_size,
+        guidance.img_size,
+    )
     samples = th.randn(
         sample_shape,
         device=device,
@@ -359,6 +379,19 @@ def normalize_image(image: th.Tensor) -> th.Tensor:
     return (image - image_min) / image_range
 
 
+def image_for_logging(image: th.Tensor) -> np.ndarray:
+    """Convert one normalized CHW sample to a W&B-compatible image array."""
+    if image.ndim != 3 or image.shape[0] not in (1, 3):
+        raise ValueError(
+            "image must have shape (1, H, W) or (3, H, W), got "
+            f"{tuple(image.shape)}"
+        )
+    image = normalize_image(image)
+    if image.shape[0] == 1:
+        return image[0].numpy()
+    return image.permute(1, 2, 0).numpy()
+
+
 def log_round_to_wandb(
     *,
     wandb_module: Any,
@@ -414,11 +447,11 @@ def log_round_to_wandb(
     samples_cpu = samples.detach().cpu()
     sample_images = []
     for sample_index in range(min(10, samples_cpu.shape[0])):
-        image = normalize_image(samples_cpu[sample_index].squeeze())
+        image = image_for_logging(samples_cpu[sample_index])
         sample_images.append(
-            wandb_module.Image(image.numpy(), caption=f"sample_{sample_index}")
+            wandb_module.Image(image, caption=f"sample_{sample_index}")
         )
-    mean_image = normalize_image(samples_cpu.mean(dim=0).squeeze())
+    mean_image = image_for_logging(samples_cpu.mean(dim=0))
 
     wandb_module.log(
         {
@@ -458,7 +491,7 @@ def log_round_to_wandb(
             ),
             "round/final_samples": sample_images,
             "round/mean_image": wandb_module.Image(
-                mean_image.numpy(),
+                mean_image,
                 caption=f"Mean image round {round_index}",
             ),
         },
@@ -509,6 +542,7 @@ def main() -> None:
             device,
             log_likelihood=log_likelihood,
             img_size=args.image_size,
+            img_channels=args.image_channels,
         )
         schedule = load_schedule(
             args.schedule_path,
