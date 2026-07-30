@@ -1,9 +1,10 @@
 """Preprint-aligned schedule diagnostics and artifact persistence."""
 
 from dataclasses import dataclass
+import csv
 import json
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping, Optional, Sequence
 
 import numpy as np
 import torch as th
@@ -171,7 +172,28 @@ def save_round_artifacts(
         total_energy=np.asarray(diagnostics.total_energy),
         total_length=np.asarray(diagnostics.total_length),
     )
-    th.save(samples.detach().cpu(), round_directory / "samples.pt")
+    samples_cpu = samples.detach().cpu()
+    th.save(samples_cpu, round_directory / "samples.pt")
+    np.save(
+        round_directory / "sample_mean.npy",
+        samples_cpu.mean(dim=0).numpy(),
+    )
+    np.save(
+        round_directory / "sample_std.npy",
+        samples_cpu.std(dim=0, unbiased=False).numpy(),
+    )
+    sample_statistics = {
+        "mean": float(samples_cpu.mean().item()),
+        "standard_deviation": float(
+            samples_cpu.std(unbiased=False).item()
+        ),
+        "minimum": float(samples_cpu.min().item()),
+        "maximum": float(samples_cpu.max().item()),
+    }
+    save_json(
+        round_directory / "sample_statistics.json",
+        sample_statistics,
+    )
     save_json(
         round_directory / "summary.json",
         {
@@ -181,8 +203,11 @@ def save_round_artifacts(
             "total_length": diagnostics.total_length,
             "num_schedule_points": diagnostics.schedule_before.size,
             "num_samples": samples.shape[0],
+            "sample_statistics": sample_statistics,
         },
     )
+    _save_round_plot(round_directory, diagnostics)
+    _save_sample_preview(round_directory, samples_cpu)
     return round_directory
 
 
@@ -191,8 +216,9 @@ def save_run_history(
     run_directory: Path,
     schedule_history: Sequence[np.ndarray],
     diagnostics_history: Sequence[RoundDiagnostics],
+    round_indices: Optional[Sequence[int]] = None,
 ) -> None:
-    """Save aggregate histories and the latest optimized schedule."""
+    """Save aggregate histories, tables, and progression plots."""
     run_directory.mkdir(parents=True, exist_ok=True)
     schedules = np.stack(schedule_history)
     np.save(run_directory / "schedule_history.npy", schedules)
@@ -200,6 +226,18 @@ def save_run_history(
 
     if not diagnostics_history:
         return
+    if len(schedule_history) != len(diagnostics_history) + 1:
+        raise ValueError(
+            "schedule_history must contain the initial schedule plus one "
+            "updated schedule per diagnostic round."
+        )
+    if round_indices is None:
+        round_indices = list(range(len(diagnostics_history)))
+    if len(round_indices) != len(diagnostics_history):
+        raise ValueError(
+            "round_indices must contain one value per diagnostic round."
+        )
+    round_indices = [int(index) for index in round_indices]
 
     array_histories = {
         "energy_increment_history": np.stack(
@@ -244,3 +282,208 @@ def save_run_history(
             dtype=np.float64,
         ),
     )
+    total_energy = np.asarray(
+        [item.total_energy for item in diagnostics_history],
+        dtype=np.float64,
+    )
+    total_length = np.asarray(
+        [item.total_length for item in diagnostics_history],
+        dtype=np.float64,
+    )
+    schedule_change = schedules[1:] - schedules[:-1]
+    schedule_change_rms = np.sqrt(np.mean(schedule_change**2, axis=1))
+    schedule_change_max = np.max(np.abs(schedule_change), axis=1)
+
+    np.savez_compressed(
+        run_directory / "run_history.npz",
+        round_index=np.asarray(round_indices, dtype=np.int64),
+        schedule_history=schedules,
+        total_energy_history=total_energy,
+        total_length_history=total_length,
+        schedule_change_rms=schedule_change_rms,
+        schedule_change_max=schedule_change_max,
+        **array_histories,
+    )
+    with (run_directory / "round_progress.csv").open(
+        "w",
+        newline="",
+    ) as csv_file:
+        writer = csv.writer(csv_file)
+        writer.writerow(
+            [
+                "round_index",
+                "total_energy",
+                "total_length",
+                "schedule_change_rms",
+                "schedule_change_max",
+            ]
+        )
+        for offset, round_index in enumerate(round_indices):
+            writer.writerow(
+                [
+                    round_index,
+                    total_energy[offset],
+                    total_length[offset],
+                    schedule_change_rms[offset],
+                    schedule_change_max[offset],
+                ]
+            )
+
+    _save_run_progress_plots(
+        run_directory=run_directory,
+        schedules=schedules,
+        round_indices=round_indices,
+        total_energy=total_energy,
+        total_length=total_length,
+        schedule_change_rms=schedule_change_rms,
+        schedule_change_max=schedule_change_max,
+    )
+
+
+def _get_pyplot():
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    return plt
+
+
+def _save_round_plot(
+    round_directory: Path,
+    diagnostics: RoundDiagnostics,
+) -> None:
+    plt = _get_pyplot()
+    figure, axes = plt.subplots(2, 2, figsize=(11, 8))
+    node = np.arange(diagnostics.schedule_before.size)
+    interval = np.arange(diagnostics.energy_increments.size)
+
+    axes[0, 0].plot(node, diagnostics.schedule_before, label="before")
+    axes[0, 0].plot(node, diagnostics.schedule_after, label="after")
+    axes[0, 0].set_title("Schedule update")
+    axes[0, 0].set_xlabel("node")
+    axes[0, 0].set_ylabel("s")
+    axes[0, 0].legend()
+
+    axes[0, 1].plot(interval, diagnostics.energy_increments)
+    axes[0, 1].set_title("Energy increments")
+    axes[0, 1].set_xlabel("interval")
+    axes[0, 1].set_ylabel("energy")
+
+    axes[1, 0].plot(interval, diagnostics.length_increments)
+    axes[1, 0].set_title("Length increments")
+    axes[1, 0].set_xlabel("interval")
+    axes[1, 0].set_ylabel("length")
+
+    axes[1, 1].plot(node, diagnostics.normalized_cumulative_length)
+    axes[1, 1].plot(
+        node,
+        np.linspace(0.0, 1.0, node.size),
+        linestyle="--",
+        label="constant-speed target",
+    )
+    axes[1, 1].set_title("Normalized cumulative length")
+    axes[1, 1].set_xlabel("node")
+    axes[1, 1].set_ylabel("normalized length")
+    axes[1, 1].legend()
+
+    for axis in axes.flat:
+        axis.grid(alpha=0.25)
+    figure.tight_layout()
+    figure.savefig(round_directory / "round_diagnostics.png", dpi=180)
+    plt.close(figure)
+
+
+def _save_sample_preview(
+    round_directory: Path,
+    samples: th.Tensor,
+    max_samples: int = 16,
+) -> None:
+    plt = _get_pyplot()
+    count = min(max_samples, samples.shape[0])
+    columns = min(4, count)
+    rows = int(np.ceil(count / columns))
+    figure, axes = plt.subplots(
+        rows,
+        columns,
+        figsize=(3 * columns, 3 * rows),
+        squeeze=False,
+    )
+    for index, axis in enumerate(axes.flat):
+        axis.axis("off")
+        if index >= count:
+            continue
+        image = samples[index].squeeze().numpy()
+        image_min = float(image.min())
+        image_range = float(image.max() - image_min)
+        if image_range > 0.0:
+            image = (image - image_min) / image_range
+        else:
+            image = np.zeros_like(image)
+        axis.imshow(image, cmap="gray", vmin=0.0, vmax=1.0)
+        axis.set_title(f"sample {index}")
+    figure.tight_layout()
+    figure.savefig(round_directory / "sample_preview.png", dpi=150)
+    plt.close(figure)
+
+
+def _save_run_progress_plots(
+    *,
+    run_directory: Path,
+    schedules: np.ndarray,
+    round_indices: Sequence[int],
+    total_energy: np.ndarray,
+    total_length: np.ndarray,
+    schedule_change_rms: np.ndarray,
+    schedule_change_max: np.ndarray,
+) -> None:
+    plt = _get_pyplot()
+    normalized_node = np.linspace(0.0, 1.0, schedules.shape[1])
+
+    schedule_figure, schedule_axis = plt.subplots(figsize=(8, 5))
+    schedule_axis.plot(
+        normalized_node,
+        schedules[0],
+        label="initial",
+        linewidth=2,
+    )
+    for offset, round_index in enumerate(round_indices):
+        schedule_axis.plot(
+            normalized_node,
+            schedules[offset + 1],
+            label=f"after round {round_index}",
+        )
+    schedule_axis.set_xlabel("normalized node")
+    schedule_axis.set_ylabel("schedule value s")
+    schedule_axis.set_title("Schedule progression across rounds")
+    schedule_axis.grid(alpha=0.25)
+    schedule_axis.legend()
+    schedule_figure.tight_layout()
+    schedule_figure.savefig(
+        run_directory / "schedule_progression.png",
+        dpi=180,
+    )
+    plt.close(schedule_figure)
+
+    progress_figure, axes = plt.subplots(2, 2, figsize=(11, 8))
+    axes[0, 0].plot(round_indices, total_energy, marker="o")
+    axes[0, 0].set_title("Total energy")
+    axes[0, 0].set_ylabel("energy")
+    axes[0, 1].plot(round_indices, total_length, marker="o")
+    axes[0, 1].set_title("Total length")
+    axes[0, 1].set_ylabel("length")
+    axes[1, 0].plot(round_indices, schedule_change_rms, marker="o")
+    axes[1, 0].set_title("Schedule RMS change")
+    axes[1, 0].set_ylabel("RMS delta s")
+    axes[1, 1].plot(round_indices, schedule_change_max, marker="o")
+    axes[1, 1].set_title("Schedule maximum change")
+    axes[1, 1].set_ylabel("max |delta s|")
+    for axis in axes.flat:
+        axis.set_xlabel("round")
+        axis.grid(alpha=0.25)
+    progress_figure.tight_layout()
+    progress_figure.savefig(
+        run_directory / "energy_length_progression.png",
+        dpi=180,
+    )
+    plt.close(progress_figure)

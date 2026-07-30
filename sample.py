@@ -11,6 +11,7 @@ import numpy as np
 import torch as th
 
 from conditional_diffusion import DiffusionGuidance
+from consistency_diagnostics import load_selected_threshold
 from likelihoods import load_log_likelihood
 from schedule_diagnostics import (
     RoundDiagnostics,
@@ -20,6 +21,9 @@ from schedule_diagnostics import (
     save_run_history,
 )
 from util import load_schedule
+
+
+DEFAULT_GUIDANCE_THRESHOLD = 1.0 - np.exp(-0.5)
 
 
 @dataclass(frozen=True)
@@ -95,6 +99,23 @@ def create_argparser() -> argparse.ArgumentParser:
         default=40,
     )
     parser.add_argument("--image_size", type=int, default=128)
+    parser.add_argument(
+        "--guidance_threshold",
+        type=float,
+        default=None,
+        help=(
+            "Schedule cutoff below which likelihood guidance is active. "
+            "Defaults to the original preprint cutoff."
+        ),
+    )
+    parser.add_argument(
+        "--consistency_result",
+        default="",
+        help=(
+            "Consistency output directory, summary.json, or threshold .npy "
+            "whose selected threshold should control guidance."
+        ),
+    )
     parser.add_argument("--initial_sigma", "--sigma0", type=float, default=0.1)
     parser.add_argument(
         "--step_tail_probability",
@@ -137,6 +158,21 @@ def create_argparser() -> argparse.ArgumentParser:
     )
 
     parser.add_argument("--wandb_project", default="bh_sampling")
+    parser.add_argument("--wandb_entity", default="")
+    parser.add_argument("--wandb_group", default="")
+    parser.add_argument(
+        "--wandb_tags",
+        default="",
+        help="Comma-separated W&B tags.",
+    )
+    parser.add_argument(
+        "--wandb_log_artifacts",
+        action="store_true",
+        help=(
+            "Upload the completed run directory, including retained samples, "
+            "as a W&B artifact."
+        ),
+    )
     parser.add_argument(
         "--wandb_mode",
         choices=("online", "offline", "disabled"),
@@ -183,6 +219,23 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("step_tail_probability must lie strictly between 0 and 1.")
     if args.log_interval < 0:
         raise ValueError("log_interval must be non-negative.")
+    if args.guidance_threshold is not None:
+        if not 0.0 < args.guidance_threshold < 1.0:
+            raise ValueError("guidance_threshold must lie between zero and one.")
+        if args.consistency_result:
+            raise ValueError(
+                "Use either guidance_threshold or consistency_result, not both."
+            )
+
+
+def resolve_guidance_threshold(args: argparse.Namespace) -> float:
+    """Resolve a direct cutoff or one estimated by EstimateConsistency."""
+    if args.guidance_threshold is not None:
+        return float(args.guidance_threshold)
+    if not args.consistency_result:
+        return float(DEFAULT_GUIDANCE_THRESHOLD)
+
+    return load_selected_threshold(args.consistency_result)
 
 
 def build_run_name(args: argparse.Namespace) -> str:
@@ -206,10 +259,14 @@ def compute_langevin_speed_schedule(
     tail_probability: float,
     device: th.device,
     dtype: th.dtype,
+    guidance_threshold: float = DEFAULT_GUIDANCE_THRESHOLD,
 ) -> LangevinSpeedSchedule:
     schedule_tensor = th.as_tensor(schedule, device=device, dtype=dtype)
     diffusion_times = guidance.diffusion_time(schedule_tensor)
-    guidance_weights = guidance.guidance_weight(diffusion_times)
+    guidance_weights = guidance.guidance_weight(
+        diffusion_times,
+        cutoff=guidance_threshold,
+    )
     sigma_schedule = th.sqrt(
         initial_sigma**2 * th.exp(-diffusion_times)
         + 1.0
@@ -329,20 +386,76 @@ def run_sampling_round(
         v_infinity[interval_index] = float(interval_v_infinity.item())
 
         if log_interval > 0 and guidance.step % log_interval == 0:
+            current_score_norm = (
+                current_score.square().sum(dim=(1, 2, 3)).mean()
+            )
+            previous_score_norm = (
+                previous_score.square().sum(dim=(1, 2, 3)).mean()
+            )
+            score_difference_norm = (
+                (current_score - previous_score)
+                .square()
+                .sum(dim=(1, 2, 3))
+                .mean()
+            )
+            log_payload = {
+                "sampling/global_step": guidance.step,
+                "sampling/node_index": node_index,
+                "sampling/schedule_value": float(schedule[node_index]),
+                "sampling/diffusion_time": float(
+                    speed_schedule.diffusion_time[node_index].item()
+                ),
+                "sampling/guidance_weight": guidance_strength,
+                "sampling/sigma": float(
+                    speed_schedule.sigma[node_index].item()
+                ),
+                "sampling/v_eff": float(
+                    speed_schedule.v_eff[node_index].item()
+                ),
+                "sampling/v_dom": float(
+                    speed_schedule.v_dom[node_index].item()
+                ),
+                "sampling/v_infinity": v_infinity[interval_index],
+                "sampling/energy_increment": energy_increments[interval_index],
+                "sampling/log_likelihood": float(mean_log_likelihood),
+                "sampling/current_score_squared_norm": float(
+                    current_score_norm.item()
+                ),
+                "sampling/previous_score_squared_norm": float(
+                    previous_score_norm.item()
+                ),
+                "sampling/score_difference_squared_norm": float(
+                    score_difference_norm.item()
+                ),
+                "sampling/step_size_mean": float(
+                    previous_stepsize.mean().item()
+                ),
+                "sampling/step_size_min": float(
+                    previous_stepsize.min().item()
+                ),
+                "sampling/step_size_max": float(
+                    previous_stepsize.max().item()
+                ),
+                "sampling/sample_mean": float(samples.mean().item()),
+                "sampling/sample_std": float(
+                    samples.std(unbiased=False).item()
+                ),
+                "sampling/sample_min": float(samples.min().item()),
+                "sampling/sample_max": float(samples.max().item()),
+            }
+            if device.type == "cuda":
+                log_payload.update(
+                    {
+                        "system/gpu_memory_allocated_gib": (
+                            th.cuda.memory_allocated(device) / 2**30
+                        ),
+                        "system/gpu_memory_reserved_gib": (
+                            th.cuda.memory_reserved(device) / 2**30
+                        ),
+                    }
+                )
             wandb_module.log(
-                {
-                    "sampling/node_index": node_index,
-                    "sampling/v_infinity": v_infinity[interval_index],
-                    "sampling/energy_increment": energy_increments[interval_index],
-                    "sampling/log_likelihood": float(mean_log_likelihood),
-                    "sampling/score_squared_norm": float(
-                        current_score.square()
-                        .sum(dim=(1, 2, 3))
-                        .mean()
-                        .item()
-                    ),
-                },
-                step=guidance.step,
+                log_payload,
             )
 
         if device.type == "cuda":
@@ -365,7 +478,6 @@ def log_round_to_wandb(
     diagnostics: RoundDiagnostics,
     samples: th.Tensor,
     round_index: int,
-    step: int,
 ) -> None:
     schedule_table = wandb_module.Table(
         columns=[
@@ -419,12 +531,39 @@ def log_round_to_wandb(
             wandb_module.Image(image.numpy(), caption=f"sample_{sample_index}")
         )
     mean_image = normalize_image(samples_cpu.mean(dim=0).squeeze())
+    schedule_change = (
+        diagnostics.schedule_after - diagnostics.schedule_before
+    )
 
     wandb_module.log(
         {
             "round/index": round_index,
             "round/total_energy": diagnostics.total_energy,
             "round/total_length": diagnostics.total_length,
+            "round/schedule_change_rms": float(
+                np.sqrt(np.mean(schedule_change**2))
+            ),
+            "round/schedule_change_max": float(
+                np.max(np.abs(schedule_change))
+            ),
+            "round/mean_energy_increment": float(
+                diagnostics.energy_increments.mean()
+            ),
+            "round/max_energy_increment": float(
+                diagnostics.energy_increments.max()
+            ),
+            "round/mean_length_increment": float(
+                diagnostics.length_increments.mean()
+            ),
+            "round/max_length_increment": float(
+                diagnostics.length_increments.max()
+            ),
+            "round/sample_mean": float(samples_cpu.mean().item()),
+            "round/sample_std": float(
+                samples_cpu.std(unbiased=False).item()
+            ),
+            "round/sample_min": float(samples_cpu.min().item()),
+            "round/sample_max": float(samples_cpu.max().item()),
             "round/schedule": wandb_module.plot.line_series(
                 xs=[
                     np.arange(diagnostics.schedule_before.size),
@@ -461,9 +600,132 @@ def log_round_to_wandb(
                 mean_image.numpy(),
                 caption=f"Mean image round {round_index}",
             ),
-        },
-        step=step,
+        }
     )
+
+
+def log_run_progress_to_wandb(
+    *,
+    wandb_module: Any,
+    schedule_history: list[np.ndarray],
+    diagnostics_history: list[RoundDiagnostics],
+    round_indices: list[int],
+) -> None:
+    """Log aggregate schedule, energy, and length progression."""
+    total_energy = np.asarray(
+        [item.total_energy for item in diagnostics_history]
+    )
+    total_length = np.asarray(
+        [item.total_length for item in diagnostics_history]
+    )
+    schedules = np.stack(schedule_history)
+    schedule_change = schedules[1:] - schedules[:-1]
+    schedule_change_rms = np.sqrt(np.mean(schedule_change**2, axis=1))
+    schedule_change_max = np.max(np.abs(schedule_change), axis=1)
+
+    progress_table = wandb_module.Table(
+        columns=[
+            "round",
+            "total_energy",
+            "total_length",
+            "schedule_change_rms",
+            "schedule_change_max",
+        ]
+    )
+    for offset, round_index in enumerate(round_indices):
+        progress_table.add_data(
+            round_index,
+            float(total_energy[offset]),
+            float(total_length[offset]),
+            float(schedule_change_rms[offset]),
+            float(schedule_change_max[offset]),
+        )
+
+    node_indices = np.linspace(
+        0,
+        schedules.shape[1] - 1,
+        min(256, schedules.shape[1]),
+        dtype=int,
+    )
+    schedule_labels = ["initial"] + [
+        f"after round {round_index}" for round_index in round_indices
+    ]
+    latest_offset = len(diagnostics_history) - 1
+    wandb_module.log(
+        {
+            "progress/round": round_indices[-1],
+            "progress/latest_total_energy": float(
+                total_energy[latest_offset]
+            ),
+            "progress/latest_total_length": float(
+                total_length[latest_offset]
+            ),
+            "progress/latest_schedule_change_rms": float(
+                schedule_change_rms[latest_offset]
+            ),
+            "progress/latest_schedule_change_max": float(
+                schedule_change_max[latest_offset]
+            ),
+            "progress/schedule_history": wandb_module.plot.line_series(
+                xs=[node_indices for _ in schedule_labels],
+                ys=[
+                    schedule[node_indices] for schedule in schedule_history
+                ],
+                keys=schedule_labels,
+                title="Schedule progression across rounds",
+                xname="schedule node",
+            ),
+            "progress/total_energy": wandb_module.plot.line(
+                progress_table,
+                "round",
+                "total_energy",
+                title="Total energy across rounds",
+            ),
+            "progress/total_length": wandb_module.plot.line(
+                progress_table,
+                "round",
+                "total_length",
+                title="Total length across rounds",
+            ),
+            "progress/schedule_change_rms": wandb_module.plot.line(
+                progress_table,
+                "round",
+                "schedule_change_rms",
+                title="Schedule RMS change across rounds",
+            ),
+            "progress/schedule_change_max": wandb_module.plot.line(
+                progress_table,
+                "round",
+                "schedule_change_max",
+                title="Schedule maximum change across rounds",
+            ),
+        }
+    )
+
+
+def log_run_artifact(
+    *,
+    wandb_module: Any,
+    run: Any,
+    run_name: str,
+    run_directory: Path,
+    num_rounds: int,
+) -> None:
+    """Upload retained samples and diagnostics after a successful run."""
+    artifact_name = "".join(
+        character if character.isalnum() or character in "-_." else "-"
+        for character in run_name
+    )
+    artifact = wandb_module.Artifact(
+        name=f"{artifact_name}-diagnostics",
+        type="sampling-run",
+        metadata={
+            "run_name": run_name,
+            "num_rounds": num_rounds,
+        },
+    )
+    artifact.add_dir(str(run_directory))
+    run.log_artifact(artifact)
 
 
 def main() -> None:
@@ -474,6 +736,7 @@ def main() -> None:
     device = select_device(args.device)
     dtype = th.get_default_dtype()
     run_name = build_run_name(args)
+    guidance_threshold = resolve_guidance_threshold(args)
     output_root = (
         Path(args.output_dir)
         if args.output_dir
@@ -484,17 +747,43 @@ def main() -> None:
 
     run = wandb.init(
         project=args.wandb_project,
+        entity=args.wandb_entity or None,
+        group=args.wandb_group or None,
+        tags=[
+            tag.strip()
+            for tag in args.wandb_tags.split(",")
+            if tag.strip()
+        ],
         name=run_name,
         mode=args.wandb_mode,
-        config=vars(args),
+        save_code=True,
+        config={
+            **vars(args),
+            "resolved_guidance_threshold": guidance_threshold,
+        },
     )
+    run.define_metric("sampling/global_step")
+    run.define_metric(
+        "sampling/*",
+        step_metric="sampling/global_step",
+    )
+    run.define_metric("round/index")
+    run.define_metric("round/*", step_metric="round/index")
+    run.define_metric("progress/round")
+    run.define_metric("progress/*", step_metric="progress/round")
     save_json(
         run_directory / "config.json",
-        {**vars(args), "resolved_device": str(device), "run_name": run_name},
+        {
+            **vars(args),
+            "resolved_device": str(device),
+            "run_name": run_name,
+            "resolved_guidance_threshold": guidance_threshold,
+        },
     )
 
     print(f"Using device: {device}")
     print(f"Using log likelihood: {args.log_likelihood}")
+    print(f"Using guidance threshold: {guidance_threshold:.8g}")
     print(f"Saving run artifacts to: {run_directory}")
 
     try:
@@ -517,6 +806,7 @@ def main() -> None:
 
         schedule_history = [schedule.copy()]
         diagnostics_history: list[RoundDiagnostics] = []
+        round_indices: list[int] = []
 
         for round_offset in range(args.num_rounds):
             round_index = args.start_round + round_offset
@@ -527,6 +817,7 @@ def main() -> None:
                 schedule,
                 initial_sigma=args.initial_sigma,
                 tail_probability=args.step_tail_probability,
+                guidance_threshold=guidance_threshold,
                 device=device,
                 dtype=dtype,
             )
@@ -562,27 +853,43 @@ def main() -> None:
                 metadata={
                     "log_likelihood": args.log_likelihood,
                     "seed": args.seed + round_index,
+                    "guidance_threshold": guidance_threshold,
                 },
             )
             schedule = diagnostics.schedule_after.copy()
             schedule_history.append(schedule.copy())
             diagnostics_history.append(diagnostics)
+            round_indices.append(round_index)
             save_run_history(
                 run_directory=run_directory,
                 schedule_history=schedule_history,
                 diagnostics_history=diagnostics_history,
+                round_indices=round_indices,
             )
             log_round_to_wandb(
                 wandb_module=wandb,
                 diagnostics=diagnostics,
                 samples=samples,
                 round_index=round_index,
-                step=guidance.step,
+            )
+            log_run_progress_to_wandb(
+                wandb_module=wandb,
+                schedule_history=schedule_history,
+                diagnostics_history=diagnostics_history,
+                round_indices=round_indices,
             )
 
             print(f"Energy: {diagnostics.total_energy:.6g}")
             print(f"Length: {diagnostics.total_length:.6g}")
             print(f"Saved round artifacts to: {round_directory}")
+        if args.wandb_log_artifacts:
+            log_run_artifact(
+                wandb_module=wandb,
+                run=run,
+                run_name=run_name,
+                run_directory=run_directory,
+                num_rounds=args.num_rounds,
+            )
     finally:
         run.finish()
 

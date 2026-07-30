@@ -13,6 +13,16 @@ LIKELIHOOD_SPEC="${LIKELIHOOD_SPEC:-interferometric}"
 WANDB_MODE="${WANDB_MODE:-offline}"
 OUTPUT_DIR="${OUTPUT_DIR:-${PROJECT_DIR}/outputs}"
 RUN_NAME="${RUN_NAME:-eht_schedule_example}"
+CONSISTENCY_RESULT="${CONSISTENCY_RESULT:-}"
+GUIDANCE_THRESHOLD="${GUIDANCE_THRESHOLD:-}"
+
+EXTRA_ARGS=()
+if [[ -n "${CONSISTENCY_RESULT}" ]]; then
+  EXTRA_ARGS+=(--consistency_result "${CONSISTENCY_RESULT}")
+fi
+if [[ -n "${GUIDANCE_THRESHOLD}" ]]; then
+  EXTRA_ARGS+=(--guidance_threshold "${GUIDANCE_THRESHOLD}")
+fi
 
 cd "${PROJECT_DIR}"
 
@@ -30,4 +40,5 @@ cd "${PROJECT_DIR}"
   --run_name "${RUN_NAME}" \
   --wandb_project bh_sampling \
   --wandb_mode "${WANDB_MODE}" \
+  "${EXTRA_ARGS[@]}" \
   "$@"
