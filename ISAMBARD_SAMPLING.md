@@ -11,17 +11,42 @@ Weights & Biases.
 
 ## One-time setup
 
-Use the conda environment described for this repository and add W&B:
+The repository provides a non-interactive setup and GPU verification job. Run
+the following on an Isambard login node:
 
 ```bash
-conda activate "$PROJECTDIR/$USER/conda-envs/ula-prior"
-python -m pip install wandb
-wandb login
+cd "$PROJECTDIR/$USER/ULA-img-sampling"
+./setup_isambard.sh
 ```
 
-The launcher defaults to that environment. If yours is elsewhere, export its
-path as `CONDA_ENV`. If Miniforge is installed elsewhere, also set `CONDA_SH`
-to its `etc/profile.d/conda.sh`.
+This installs Miniforge in `$HOME/miniforge3` if it is absent, then submits a
+one-GPU Slurm job which creates or updates
+`$PROJECTDIR/$USER/conda-envs/ula-prior` from
+`environment-isambard-aarch64.yml`. The job verifies package consistency,
+CUDA, `torchkbnufft`, the diffusion checkpoint, both day-095 EHT likelihoods
+and their gradients, and W&B logging.
+
+Monitor setup with:
+
+```bash
+squeue --me
+tail -f slurm/logs/ula_env_setup_<job-id>.out
+```
+
+The resolved Conda YAML, explicit Conda package list, and pip freeze are saved
+under `$PROJECTDIR/$USER/ula-img-sampling-env-exports` after setup.
+
+W&B authentication is taken from an existing `wandb login` or from an
+exported `WANDB_API_KEY`. To set a project or team before submission:
+
+```bash
+WANDB_PROJECT=bh_sampling \
+WANDB_ENTITY=YOUR_ENTITY \
+./setup_isambard.sh
+```
+
+If Miniforge or the environment should live elsewhere, set `CONDA_ROOT`,
+`CONDA_SH`, or `CONDA_ENV` before running the setup script.
 
 ## Submit both datasets
 

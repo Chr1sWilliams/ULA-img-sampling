@@ -28,7 +28,9 @@ case "${SLURM_ARRAY_TASK_ID:-0}" in
 esac
 
 module reset
-module load "${ISAMBARD_PROGRAMMING_ENVIRONMENT:-PrgEnv-gnu}"
+if [[ -n "${ISAMBARD_PROGRAMMING_ENVIRONMENT:-}" ]]; then
+  module load "${ISAMBARD_PROGRAMMING_ENVIRONMENT}"
+fi
 
 CONDA_ENV="${CONDA_ENV:-}"
 if [[ -z "${CONDA_ENV}" ]]; then
@@ -110,7 +112,7 @@ if [[ -n "${WANDB_ENTITY}" ]]; then
 fi
 
 "${PYTHON_BIN}" -c \
-  "import torch, wandb; assert torch.cuda.is_available(), 'CUDA is unavailable'; print('CUDA:', torch.cuda.get_device_name(0)); print('W&B:', wandb.__version__)"
+  "import ehtim, torch, torchkbnufft, wandb; assert torch.cuda.is_available(), 'CUDA is unavailable'; print('CUDA:', torch.cuda.get_device_name(0)); print('torchkbnufft:', torchkbnufft.__version__); print('W&B:', wandb.__version__)"
 
 echo "Dataset: ${DATA_LABEL} (${UVFILE})"
 echo "Output: ${OUTPUT_ROOT}/${RUN_NAME}"
