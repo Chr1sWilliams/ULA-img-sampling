@@ -1,0 +1,76 @@
+annotated-types==0.8.0
+astropy==6.1.7
+astropy-iers-data==0.2026.7.27.0.56.29
+blobfile==3.2.0
+certifi==2026.7.22
+charset-normalizer==3.4.9
+click==8.4.2
+contourpy @ file:///home/conda/feedstock_root/build_artifacts/contourpy_1744743074898/work
+cycler @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_cycler_1764466758/work
+ehtim==1.2.10
+filelock @ file:///home/conda/feedstock_root/build_artifacts/filelock_1785376317471/work
+fonttools @ file:///home/conda/feedstock_root/build_artifacts/fonttools_1778770245311/work
+fsspec @ file:///home/conda/feedstock_root/build_artifacts/fsspec_1785325143698/work
+future==1.0.0
+gitdb==4.0.12
+GitPython==3.1.57
+gmpy2 @ file:///home/conda/feedstock_root/build_artifacts/gmpy2_1773244941949/work
+h5py==3.16.0
+hdrhistogram==0.10.7
+idna==3.18
+Jinja2 @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_jinja2_1764517220/work
+jplephem==2.24
+kiwisolver @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_kiwisolver_1773067288/work
+lxml==6.1.1
+MarkupSafe @ file:///home/conda/feedstock_root/build_artifacts/markupsafe_1772445188657/work
+matplotlib==3.10.9
+mpi4py @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_mpi4py_1778930338/work
+mpmath @ file:///home/conda/feedstock_root/build_artifacts/mpmath_1773661943568/work
+munkres==1.1.4
+networkx @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_networkx_1731521053/work
+numpy @ file:///home/conda/feedstock_root/build_artifacts/numpy_1747544638300/work/dist/numpy-2.2.6-cp310-cp310-linux_aarch64.whl#sha256=332ddad3fab679756de94800a0541e7492983cbf1b32c046fba455e17aba25be
+optree @ file:///home/conda/feedstock_root/build_artifacts/optree_1778047563753/work
+packaging @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_packaging_1777103621/work
+pandas==2.3.3
+pandas_appender==0.9.9
+paramsurvey==0.4.21
+pbr==7.0.3
+pillow @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_pillow_1782912107/work
+pip @ file:///home/conda/feedstock_root/build_artifacts/pip_1785420855237/work
+platformdirs==4.11.0
+protobuf==6.33.6
+psutil==7.2.2
+pybind11 @ file:///D:/bld/pybind11-split_1747934313674/work
+pybind11_global @ file:///home/conda/feedstock_root/build_artifacts/pybind11-split_1747934270866/work
+pycryptodomex==3.23.0
+pydantic==2.13.4
+pydantic_core==2.46.4
+pyerfa==2.0.1.5
+pyparsing @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_pyparsing_1769003998/work
+PySide6==6.11.1
+python-dateutil @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_python-dateutil_1751104122/work
+pytz==2026.3.post1
+PyYAML @ file:///home/conda/feedstock_root/build_artifacts/pyyaml_1770223237275/work
+requests==2.34.2
+scipy @ file:///home/conda/feedstock_root/build_artifacts/scipy-split_1739790654670/work/dist/scipy-1.15.2-cp310-cp310-linux_aarch64.whl#sha256=b24843904c3e97381dd8cc65a3fccd452d555627c4f049562fa8900f22cafa94
+sentry-sdk==2.66.1
+setuptools==80.10.2
+sgp4==2.27
+shiboken6==6.11.1
+six @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_six_1753199211/work
+skyfield==1.54
+smmap==5.0.3
+sympy @ file:///home/conda/feedstock_root/build_artifacts/sympy_1771952240620/work
+torch @ file:///home/conda/feedstock_root/build_artifacts/libtorch_1762251200532/work
+torchkbnufft==1.5.2
+torchvision @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_torchvision_1762096349/work
+torchvision-extra-decoders @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_torchvision-extra-decoders_1759392564/work
+tornado @ file:///home/conda/feedstock_root/build_artifacts/tornado_1781007053963/work
+triton @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_triton_1754467233/work
+typing-inspection==0.4.2
+typing_extensions @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_typing_extensions_1783002732/work
+tzdata==2026.3
+unicodedata2 @ file:///home/conda/feedstock_root/build_artifacts/unicodedata2_1770908967659/work
+urllib3==2.7.0
+wandb==0.23.1
+wheel==0.47.0
