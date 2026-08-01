@@ -9,7 +9,18 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+if [[ -n "${ULA_REPO_DIR:-}" ]]; then
+  REPO_DIR="$(cd "${ULA_REPO_DIR}" && pwd)"
+elif [[ -n "${SLURM_SUBMIT_DIR:-}" ]]; then
+  REPO_DIR="$(cd "${SLURM_SUBMIT_DIR}" && pwd)"
+else
+  REPO_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+fi
+if [[ ! -f "${REPO_DIR}/environment-isambard-aarch64.yml" ]]; then
+  echo "Repository root not found at: ${REPO_DIR}" >&2
+  echo "Submit from the repository root or set ULA_REPO_DIR." >&2
+  exit 2
+fi
 
 module reset
 if [[ -n "${ISAMBARD_PROGRAMMING_ENVIRONMENT:-}" ]]; then
