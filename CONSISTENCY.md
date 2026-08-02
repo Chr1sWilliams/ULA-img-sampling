@@ -141,7 +141,7 @@ PYTHON_BIN="$PROJECTDIR/$USER/conda-envs/ula-prior/bin/python" \
 UVFILE="$PWD/bh_util/sim_files/SR1_M87_2017_095_hi_hops_netcal_StokesI.uvfits" \
 OUTPUT_DIR="$PROJECTDIR/$USER/ula-img-sampling-runs/model-consistency-095-hi" \
 NUM_SAMPLES=1000 \
-BATCH_SIZE=20 \
+BATCH_SIZE=200 \
 ./launch_model_consistency.sh
 ```
 

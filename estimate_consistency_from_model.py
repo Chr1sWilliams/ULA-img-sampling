@@ -28,7 +28,7 @@ from model_schedule import (
 def create_argparser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--num_samples", type=int, default=1000)
-    parser.add_argument("--batch_size", type=int, default=20)
+    parser.add_argument("--batch_size", type=int, default=200)
     parser.add_argument(
         "--num_grid_points",
         type=int,
