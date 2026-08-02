@@ -92,3 +92,65 @@ A threshold can also be supplied manually:
 ```bash
 GUIDANCE_THRESHOLD=0.25 ./launch_example.sh
 ```
+
+## Model-only estimation
+
+`estimate_consistency_from_model.py` runs the full calculation without a
+training-image directory:
+
+1. It generates unconditional clean samples using ancestral reverse-SDE
+   stepping and the beta/omega arrays loaded with the model.
+2. On those generated samples, it reproduces the active trainer schedule
+   objective. At interval `t`, it draws `X_t` from the forward kernel and
+   evaluates both adjacent scores on the same `X_t`:
+
+   ```text
+   D_t = mean[sigma_(t-1)^2
+              * ||score_(t-1)(X_t) - score_t(X_t)||_2^2]
+   lambda_t = sqrt(D_t)
+   ```
+
+   The mean is over generated samples, while the squared norm sums all image
+   pixels. The normalized cumulative `lambda_t` path is inverted at uniformly
+   spaced length targets using shape-preserving cubic interpolation. This
+   makes the proposed schedule approximately constant length per reverse step.
+3. It converts the optimized integrated-noise times to exact VP increments,
+   `beta_t = 1 - exp(-(omega_t - omega_(t-1)))`, then generates a fresh set of
+   unconditional samples using ancestral reverse-SDE stepping.
+4. Those fresh generated samples replace the training set in the existing
+   Tweedie/likelihood-score consistency estimator.
+
+Both sampling stages use 1000 samples by default. Launch with:
+
+```bash
+./launch_model_consistency.sh
+```
+
+On Isambard, the batch launcher runs high- and low-band day-095 likelihoods as
+an array. Use `--array=0` when only the high-band result is wanted:
+
+```bash
+mkdir -p slurm/logs
+sbatch --array=0 slurm/run_model_consistency.sh
+```
+
+For the day-095 high-band likelihood on Isambard, for example:
+
+```bash
+PYTHON_BIN="$PROJECTDIR/$USER/conda-envs/ula-prior/bin/python" \
+UVFILE="$PWD/bh_util/sim_files/SR1_M87_2017_095_hi_hops_netcal_StokesI.uvfits" \
+OUTPUT_DIR="$PROJECTDIR/$USER/ula-img-sampling-runs/model-consistency-095-hi" \
+NUM_SAMPLES=1000 \
+BATCH_SIZE=20 \
+./launch_model_consistency.sh
+```
+
+`SCHEDULE_UPDATE_RATE=1` applies the full equal-length proposal. A smaller
+value blends it with the loaded schedule, matching the trainer's gradual
+schedule-update behavior. `NUM_GRID_POINTS` changes only the consistency grid;
+it linearly interpolates the optimized schedule while preserving its endpoints.
+
+The output includes both sample tensors and previews, the original and
+optimized omega arrays, exact optimized betas, the optimized `s` schedule,
+energy and length increments, cumulative-length diagnostics, a schedule plot,
+and the usual consistency path and selected `guidance_threshold.npy`.

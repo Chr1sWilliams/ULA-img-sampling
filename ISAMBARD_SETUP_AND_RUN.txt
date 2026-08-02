@@ -174,3 +174,22 @@ Resolved environment exports are stored under:
 W&B records live sampling diagnostics, schedule progression, energy and
 length across rounds, sample previews, GPU memory, and the completed run
 artifact.
+
+
+8. Estimate consistency without the training set
+-------------------------------------------------
+
+The model-only job generates 1000 unconditional samples, estimates the
+sigma-squared weighted adjacent-score schedule used by the trainer, generates
+a fresh 1000 samples with the optimized reverse-SDE schedule, and uses those
+samples for the consistency threshold.
+
+Run only the day-095 high-band likelihood with:
+
+  cd "$PROJECTDIR/$USER/ULA-img-sampling"
+  mkdir -p slurm/logs
+  sbatch --array=0 slurm/run_model_consistency.sh
+
+Remove "--array=0" to submit both high- and low-band array tasks. Useful
+overrides are NUM_SAMPLES, BATCH_SIZE, NUM_GRID_POINTS, ETA_TOLERANCE,
+SCHEDULE_UPDATE_RATE, OUTPUT_ROOT, and SEED.
