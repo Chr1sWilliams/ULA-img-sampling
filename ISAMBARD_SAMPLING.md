@@ -74,6 +74,7 @@ All main run settings can be adjusted without editing the launcher:
 ```bash
 NUM_ROUNDS=6 \
 NUM_SAMPLES=64 \
+LENGTH_INCREMENT_CLIP_MULTIPLE=5 \
 LOG_INTERVAL=50 \
 WANDB_PROJECT=bh_sampling \
 WANDB_ENTITY=YOUR_ENTITY \
@@ -81,10 +82,18 @@ sbatch slurm/run_eht_095.sh
 ```
 
 Available settings include `NUM_SCHEDULE_POINTS`, `NUM_ROUNDS`,
-`CORRECTOR_STEPS`, `NUM_SAMPLES`, `INITIAL_SIGMA`,
+`CORRECTOR_STEPS`, `NUM_SAMPLES`, `LENGTH_INCREMENT_CLIP_MULTIPLE`,
+`INITIAL_SIGMA`,
 `STEP_TAIL_PROBABILITY`, `LOG_INTERVAL`, `SEED`, `OUTPUT_ROOT`,
 `WANDB_MODE`, `WANDB_PROJECT`, `WANDB_ENTITY`, `WANDB_GROUP`, and
 `WANDB_TAGS`.
+
+`LENGTH_INCREMENT_CLIP_MULTIPLE` caps each schedule-learning length increment
+at that multiple of the mean raw length increment. Its default is `inf`, which
+disables clipping. Raw and clipped increments are both retained locally and in
+W&B. A preloaded schedule is linearly interpolated to `NUM_SCHEDULE_POINTS`, so
+the next run may use a different number of annealing points while preserving
+the schedule endpoints.
 
 To use an estimated consistency cutoff:
 
@@ -108,7 +117,7 @@ Each round contains:
 - the complete `samples.pt` tensor and sample preview;
 - pixelwise sample mean and standard deviation;
 - the schedule before and after optimization;
-- energy and length increments;
+- raw and clipped energy and length increments, including clip diagnostics;
 - cumulative length, diffusion time, guidance, and Langevin-speed arrays;
 - a compressed diagnostics archive and a JSON summary.
 

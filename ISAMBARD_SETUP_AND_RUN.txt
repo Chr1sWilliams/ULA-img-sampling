@@ -129,6 +129,16 @@ Array task 0 uses the day-095 high-band file.
   mkdir -p slurm/logs
   sbatch slurm/run_eht_095.sh
 
+To cap unusually large schedule-learning length increments at, for example,
+five times their raw mean, launch with:
+
+  LENGTH_INCREMENT_CLIP_MULTIPLE=5 sbatch slurm/run_eht_095.sh
+
+The default is "inf", which disables clipping. Raw and clipped diagnostics are
+both saved. You may also set NUM_SCHEDULE_POINTS to a different number when
+loading a learned schedule; it is linearly interpolated to the requested count
+and its endpoints are preserved.
+
 The launcher submits two array tasks:
 
   task 0: SR1_M87_2017_095_hi_hops_netcal_StokesI.uvfits

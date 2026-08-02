@@ -13,7 +13,7 @@ from schedule_diagnostics import (
 )
 
 
-def make_diagnostics(schedule, energy):
+def make_diagnostics(schedule, energy, clip_multiple=np.inf):
     schedule = np.asarray(schedule, dtype=np.float64)
     node_values = np.linspace(0.1, 0.9, schedule.size)
     return build_round_diagnostics(
@@ -25,10 +25,70 @@ def make_diagnostics(schedule, energy):
         sigma=node_values,
         v_eff=node_values,
         v_dom=node_values,
+        length_increment_clip_multiple=clip_multiple,
     )
 
 
 class ScheduleHistoryTests(unittest.TestCase):
+    def test_default_infinite_clip_leaves_increments_unchanged(self):
+        diagnostics = make_diagnostics(
+            [0.05, 0.3, 0.7, 0.95],
+            [1.0, 4.0, 100.0],
+        )
+
+        np.testing.assert_array_equal(
+            diagnostics.energy_increments,
+            diagnostics.raw_energy_increments,
+        )
+        np.testing.assert_array_equal(
+            diagnostics.length_increments,
+            diagnostics.raw_length_increments,
+        )
+        self.assertEqual(diagnostics.num_length_increments_clipped, 0)
+        self.assertTrue(np.isinf(diagnostics.length_increment_clip_threshold))
+
+    def test_infinite_clip_handles_zero_length_path(self):
+        diagnostics = make_diagnostics(
+            [0.05, 0.3, 0.7, 0.95],
+            [0.0, 0.0, 0.0],
+        )
+
+        np.testing.assert_array_equal(
+            diagnostics.length_increments,
+            np.zeros(3),
+        )
+        np.testing.assert_array_equal(
+            diagnostics.schedule_after,
+            diagnostics.schedule_before,
+        )
+        self.assertFalse(np.isnan(diagnostics.total_length))
+
+    def test_finite_clip_caps_length_at_multiple_of_raw_mean(self):
+        diagnostics = make_diagnostics(
+            [0.05, 0.3, 0.7, 0.95],
+            [1.0, 1.0, 100.0],
+            clip_multiple=1.0,
+        )
+
+        np.testing.assert_allclose(
+            diagnostics.raw_length_increments,
+            [1.0, 1.0, 10.0],
+        )
+        np.testing.assert_allclose(
+            diagnostics.length_increments,
+            [1.0, 1.0, 4.0],
+        )
+        np.testing.assert_allclose(
+            diagnostics.energy_increments,
+            [1.0, 1.0, 16.0],
+        )
+        self.assertEqual(diagnostics.raw_total_energy, 102.0)
+        self.assertEqual(diagnostics.total_energy, 18.0)
+        self.assertEqual(diagnostics.raw_total_length, 12.0)
+        self.assertEqual(diagnostics.total_length, 6.0)
+        self.assertEqual(diagnostics.length_increment_clip_threshold, 4.0)
+        self.assertEqual(diagnostics.num_length_increments_clipped, 1)
+
     def test_saves_round_samples_and_progression(self):
         first = make_diagnostics(
             [0.05, 0.3, 0.7, 0.95],
@@ -66,6 +126,9 @@ class ScheduleHistoryTests(unittest.TestCase):
             self.assertTrue(
                 (round_directory / "sample_preview.png").is_file()
             )
+            self.assertTrue(
+                (round_directory / "raw_length_increments.npy").is_file()
+            )
 
             save_run_history(
                 run_directory=run_directory,
@@ -92,6 +155,11 @@ class ScheduleHistoryTests(unittest.TestCase):
             history = np.load(run_directory / "run_history.npz")
             np.testing.assert_array_equal(history["round_index"], [7, 8])
             self.assertEqual(history["schedule_history"].shape, (3, 4))
+            self.assertIn("raw_length_increment_history", history.files)
+            self.assertIn(
+                "num_length_increments_clipped_history",
+                history.files,
+            )
 
 
 if __name__ == "__main__":

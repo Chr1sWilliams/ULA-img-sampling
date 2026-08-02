@@ -16,7 +16,9 @@ class RoundDiagnostics:
 
     schedule_before: np.ndarray
     schedule_after: np.ndarray
+    raw_energy_increments: np.ndarray
     energy_increments: np.ndarray
+    raw_length_increments: np.ndarray
     length_increments: np.ndarray
     cumulative_length: np.ndarray
     normalized_cumulative_length: np.ndarray
@@ -26,8 +28,13 @@ class RoundDiagnostics:
     sigma: np.ndarray
     v_eff: np.ndarray
     v_dom: np.ndarray
+    raw_total_energy: float
     total_energy: float
+    raw_total_length: float
     total_length: float
+    length_increment_clip_multiple: float
+    length_increment_clip_threshold: float
+    num_length_increments_clipped: int
 
 
 def build_round_diagnostics(
@@ -40,8 +47,15 @@ def build_round_diagnostics(
     sigma: np.ndarray,
     v_eff: np.ndarray,
     v_dom: np.ndarray,
+    length_increment_clip_multiple: float = np.inf,
 ) -> RoundDiagnostics:
-    """Compute length increments and the constant-speed schedule update."""
+    """Compute optionally clipped increments and the schedule update.
+
+    A finite clip multiple caps each raw length increment at that multiple of
+    the mean raw length increment. The effective energy is the square of the
+    clipped length, preserving the energy/length relationship used by the
+    schedule update. Raw values remain available in the returned diagnostics.
+    """
     schedule = np.asarray(schedule, dtype=np.float64)
     energy_increments = np.asarray(energy_increments, dtype=np.float64)
     v_infinity = np.asarray(v_infinity, dtype=np.float64)
@@ -81,13 +95,38 @@ def build_round_diagnostics(
         raise ValueError("schedule must be monotonically non-decreasing.")
     if np.any(energy_increments < -1e-12):
         raise ValueError("energy_increments must be non-negative.")
+    length_increment_clip_multiple = float(length_increment_clip_multiple)
+    if (
+        np.isnan(length_increment_clip_multiple)
+        or length_increment_clip_multiple <= 0.0
+    ):
+        raise ValueError(
+            "length_increment_clip_multiple must be positive or infinity."
+        )
 
-    energy_increments = np.maximum(energy_increments, 0.0)
-    length_increments = np.sqrt(energy_increments)
+    raw_energy_increments = np.maximum(energy_increments, 0.0)
+    raw_length_increments = np.sqrt(raw_energy_increments)
+    raw_mean_length = float(raw_length_increments.mean())
+    if np.isinf(length_increment_clip_multiple):
+        length_increment_clip_threshold = np.inf
+    else:
+        length_increment_clip_threshold = float(
+            length_increment_clip_multiple * raw_mean_length
+        )
+    length_increments = np.minimum(
+        raw_length_increments,
+        length_increment_clip_threshold,
+    )
+    energy_increments = np.square(length_increments)
+    num_length_increments_clipped = int(
+        np.count_nonzero(length_increments < raw_length_increments)
+    )
     cumulative_length = np.concatenate(
         [np.zeros(1, dtype=np.float64), np.cumsum(length_increments)]
     )
+    raw_total_energy = float(raw_energy_increments.sum())
     total_energy = float(energy_increments.sum())
+    raw_total_length = float(raw_length_increments.sum())
     total_length = float(cumulative_length[-1])
 
     if total_length <= 0.0:
@@ -116,7 +155,9 @@ def build_round_diagnostics(
     return RoundDiagnostics(
         schedule_before=schedule.copy(),
         schedule_after=schedule_after,
+        raw_energy_increments=raw_energy_increments,
         energy_increments=energy_increments,
+        raw_length_increments=raw_length_increments,
         length_increments=length_increments,
         cumulative_length=cumulative_length,
         normalized_cumulative_length=normalized_cumulative_length,
@@ -126,8 +167,13 @@ def build_round_diagnostics(
         sigma=sigma,
         v_eff=v_eff,
         v_dom=v_dom,
+        raw_total_energy=raw_total_energy,
         total_energy=total_energy,
+        raw_total_length=raw_total_length,
         total_length=total_length,
+        length_increment_clip_multiple=length_increment_clip_multiple,
+        length_increment_clip_threshold=length_increment_clip_threshold,
+        num_length_increments_clipped=num_length_increments_clipped,
     )
 
 
@@ -152,7 +198,9 @@ def save_round_artifacts(
     array_artifacts = {
         "schedule_before": diagnostics.schedule_before,
         "schedule_after": diagnostics.schedule_after,
+        "raw_energy_increments": diagnostics.raw_energy_increments,
         "energy_increments": diagnostics.energy_increments,
+        "raw_length_increments": diagnostics.raw_length_increments,
         "length_increments": diagnostics.length_increments,
         "cumulative_length": diagnostics.cumulative_length,
         "normalized_cumulative_length": diagnostics.normalized_cumulative_length,
@@ -169,8 +217,19 @@ def save_round_artifacts(
     np.savez_compressed(
         round_directory / "diagnostics.npz",
         **array_artifacts,
+        raw_total_energy=np.asarray(diagnostics.raw_total_energy),
         total_energy=np.asarray(diagnostics.total_energy),
+        raw_total_length=np.asarray(diagnostics.raw_total_length),
         total_length=np.asarray(diagnostics.total_length),
+        length_increment_clip_multiple=np.asarray(
+            diagnostics.length_increment_clip_multiple
+        ),
+        length_increment_clip_threshold=np.asarray(
+            diagnostics.length_increment_clip_threshold
+        ),
+        num_length_increments_clipped=np.asarray(
+            diagnostics.num_length_increments_clipped
+        ),
     )
     samples_cpu = samples.detach().cpu()
     th.save(samples_cpu, round_directory / "samples.pt")
@@ -199,8 +258,19 @@ def save_round_artifacts(
         {
             **metadata,
             "round_index": round_index,
+            "raw_total_energy": diagnostics.raw_total_energy,
             "total_energy": diagnostics.total_energy,
+            "raw_total_length": diagnostics.raw_total_length,
             "total_length": diagnostics.total_length,
+            "length_increment_clip_multiple": (
+                diagnostics.length_increment_clip_multiple
+            ),
+            "length_increment_clip_threshold": (
+                diagnostics.length_increment_clip_threshold
+            ),
+            "num_length_increments_clipped": (
+                diagnostics.num_length_increments_clipped
+            ),
             "num_schedule_points": diagnostics.schedule_before.size,
             "num_samples": samples.shape[0],
             "sample_statistics": sample_statistics,
@@ -240,8 +310,14 @@ def save_run_history(
     round_indices = [int(index) for index in round_indices]
 
     array_histories = {
+        "raw_energy_increment_history": np.stack(
+            [item.raw_energy_increments for item in diagnostics_history]
+        ),
         "energy_increment_history": np.stack(
             [item.energy_increments for item in diagnostics_history]
+        ),
+        "raw_length_increment_history": np.stack(
+            [item.raw_length_increments for item in diagnostics_history]
         ),
         "length_increment_history": np.stack(
             [item.length_increments for item in diagnostics_history]
@@ -269,9 +345,23 @@ def save_run_history(
         np.save(run_directory / f"{name}.npy", values)
 
     np.save(
+        run_directory / "raw_total_energy_history.npy",
+        np.asarray(
+            [item.raw_total_energy for item in diagnostics_history],
+            dtype=np.float64,
+        ),
+    )
+    np.save(
         run_directory / "total_energy_history.npy",
         np.asarray(
             [item.total_energy for item in diagnostics_history],
+            dtype=np.float64,
+        ),
+    )
+    np.save(
+        run_directory / "raw_total_length_history.npy",
+        np.asarray(
+            [item.raw_total_length for item in diagnostics_history],
             dtype=np.float64,
         ),
     )
@@ -282,8 +372,16 @@ def save_run_history(
             dtype=np.float64,
         ),
     )
+    raw_total_energy = np.asarray(
+        [item.raw_total_energy for item in diagnostics_history],
+        dtype=np.float64,
+    )
     total_energy = np.asarray(
         [item.total_energy for item in diagnostics_history],
+        dtype=np.float64,
+    )
+    raw_total_length = np.asarray(
+        [item.raw_total_length for item in diagnostics_history],
         dtype=np.float64,
     )
     total_length = np.asarray(
@@ -293,13 +391,39 @@ def save_run_history(
     schedule_change = schedules[1:] - schedules[:-1]
     schedule_change_rms = np.sqrt(np.mean(schedule_change**2, axis=1))
     schedule_change_max = np.max(np.abs(schedule_change), axis=1)
+    clip_multiple = np.asarray(
+        [
+            item.length_increment_clip_multiple
+            for item in diagnostics_history
+        ],
+        dtype=np.float64,
+    )
+    clip_threshold = np.asarray(
+        [
+            item.length_increment_clip_threshold
+            for item in diagnostics_history
+        ],
+        dtype=np.float64,
+    )
+    clipped_count = np.asarray(
+        [
+            item.num_length_increments_clipped
+            for item in diagnostics_history
+        ],
+        dtype=np.int64,
+    )
 
     np.savez_compressed(
         run_directory / "run_history.npz",
         round_index=np.asarray(round_indices, dtype=np.int64),
         schedule_history=schedules,
+        raw_total_energy_history=raw_total_energy,
         total_energy_history=total_energy,
+        raw_total_length_history=raw_total_length,
         total_length_history=total_length,
+        length_increment_clip_multiple_history=clip_multiple,
+        length_increment_clip_threshold_history=clip_threshold,
+        num_length_increments_clipped_history=clipped_count,
         schedule_change_rms=schedule_change_rms,
         schedule_change_max=schedule_change_max,
         **array_histories,
@@ -312,8 +436,13 @@ def save_run_history(
         writer.writerow(
             [
                 "round_index",
+                "raw_total_energy",
                 "total_energy",
+                "raw_total_length",
                 "total_length",
+                "length_increment_clip_multiple",
+                "length_increment_clip_threshold",
+                "num_length_increments_clipped",
                 "schedule_change_rms",
                 "schedule_change_max",
             ]
@@ -322,8 +451,13 @@ def save_run_history(
             writer.writerow(
                 [
                     round_index,
+                    raw_total_energy[offset],
                     total_energy[offset],
+                    raw_total_length[offset],
                     total_length[offset],
+                    clip_multiple[offset],
+                    clip_threshold[offset],
+                    clipped_count[offset],
                     schedule_change_rms[offset],
                     schedule_change_max[offset],
                 ]
@@ -333,7 +467,9 @@ def save_run_history(
         run_directory=run_directory,
         schedules=schedules,
         round_indices=round_indices,
+        raw_total_energy=raw_total_energy,
         total_energy=total_energy,
+        raw_total_length=raw_total_length,
         total_length=total_length,
         schedule_change_rms=schedule_change_rms,
         schedule_change_max=schedule_change_max,
@@ -365,15 +501,37 @@ def _save_round_plot(
     axes[0, 0].set_ylabel("s")
     axes[0, 0].legend()
 
-    axes[0, 1].plot(interval, diagnostics.energy_increments)
+    axes[0, 1].plot(
+        interval,
+        diagnostics.raw_energy_increments,
+        label="raw",
+        alpha=0.7,
+    )
+    axes[0, 1].plot(
+        interval,
+        diagnostics.energy_increments,
+        label="used",
+    )
     axes[0, 1].set_title("Energy increments")
     axes[0, 1].set_xlabel("interval")
     axes[0, 1].set_ylabel("energy")
+    axes[0, 1].legend()
 
-    axes[1, 0].plot(interval, diagnostics.length_increments)
+    axes[1, 0].plot(
+        interval,
+        diagnostics.raw_length_increments,
+        label="raw",
+        alpha=0.7,
+    )
+    axes[1, 0].plot(
+        interval,
+        diagnostics.length_increments,
+        label="used",
+    )
     axes[1, 0].set_title("Length increments")
     axes[1, 0].set_xlabel("interval")
     axes[1, 0].set_ylabel("length")
+    axes[1, 0].legend()
 
     axes[1, 1].plot(node, diagnostics.normalized_cumulative_length)
     axes[1, 1].plot(
@@ -432,7 +590,9 @@ def _save_run_progress_plots(
     run_directory: Path,
     schedules: np.ndarray,
     round_indices: Sequence[int],
+    raw_total_energy: np.ndarray,
     total_energy: np.ndarray,
+    raw_total_length: np.ndarray,
     total_length: np.ndarray,
     schedule_change_rms: np.ndarray,
     schedule_change_max: np.ndarray,
@@ -466,12 +626,36 @@ def _save_run_progress_plots(
     plt.close(schedule_figure)
 
     progress_figure, axes = plt.subplots(2, 2, figsize=(11, 8))
-    axes[0, 0].plot(round_indices, total_energy, marker="o")
+    axes[0, 0].plot(
+        round_indices,
+        raw_total_energy,
+        marker="o",
+        label="raw",
+    )
+    axes[0, 0].plot(
+        round_indices,
+        total_energy,
+        marker="o",
+        label="used",
+    )
     axes[0, 0].set_title("Total energy")
     axes[0, 0].set_ylabel("energy")
-    axes[0, 1].plot(round_indices, total_length, marker="o")
+    axes[0, 0].legend()
+    axes[0, 1].plot(
+        round_indices,
+        raw_total_length,
+        marker="o",
+        label="raw",
+    )
+    axes[0, 1].plot(
+        round_indices,
+        total_length,
+        marker="o",
+        label="used",
+    )
     axes[0, 1].set_title("Total length")
     axes[0, 1].set_ylabel("length")
+    axes[0, 1].legend()
     axes[1, 0].plot(round_indices, schedule_change_rms, marker="o")
     axes[1, 0].set_title("Schedule RMS change")
     axes[1, 0].set_ylabel("RMS delta s")

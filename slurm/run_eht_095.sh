@@ -101,6 +101,7 @@ TASK_ID="${SLURM_ARRAY_TASK_ID:-0}"
 RUN_NAME="${RUN_NAME:-eht-095-${DATA_LABEL}-${JOB_ID}-${TASK_ID}}"
 
 NUM_SCHEDULE_POINTS="${NUM_SCHEDULE_POINTS:-4000}"
+LENGTH_INCREMENT_CLIP_MULTIPLE="${LENGTH_INCREMENT_CLIP_MULTIPLE:-inf}"
 NUM_ROUNDS="${NUM_ROUNDS:-4}"
 CORRECTOR_STEPS="${CORRECTOR_STEPS:-3}"
 NUM_SAMPLES="${NUM_SAMPLES:-40}"
@@ -135,6 +136,7 @@ srun --ntasks=1 "${PYTHON_BIN}" sample.py \
   --uvfile "${UVFILE}" \
   --schedule_path "${SCHEDULE_PATH}" \
   --num_schedule_points "${NUM_SCHEDULE_POINTS}" \
+  --length_increment_clip_multiple "${LENGTH_INCREMENT_CLIP_MULTIPLE}" \
   --num_rounds "${NUM_ROUNDS}" \
   --corrector_steps "${CORRECTOR_STEPS}" \
   --num_samples "${NUM_SAMPLES}" \

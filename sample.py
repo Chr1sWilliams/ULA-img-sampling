@@ -71,6 +71,16 @@ def create_argparser() -> argparse.ArgumentParser:
         default=4000,
     )
     parser.add_argument(
+        "--length_increment_clip_multiple",
+        type=float,
+        default=float("inf"),
+        help=(
+            "Cap each schedule-learning length increment at this multiple "
+            "of the mean raw increment. The default, infinity, disables "
+            "clipping."
+        ),
+    )
+    parser.add_argument(
         "--num_rounds",
         "--N_rounds",
         dest="num_rounds",
@@ -209,6 +219,13 @@ def validate_args(args: argparse.Namespace) -> None:
             raise ValueError(f"{name} must be positive.")
     if args.num_schedule_points < 2:
         raise ValueError("num_schedule_points must be at least 2.")
+    if (
+        np.isnan(args.length_increment_clip_multiple)
+        or args.length_increment_clip_multiple <= 0.0
+    ):
+        raise ValueError(
+            "length_increment_clip_multiple must be positive or infinity."
+        )
     if args.start_round < 0:
         raise ValueError("start_round must be non-negative.")
     if args.corrector_steps < 0:
@@ -510,16 +527,25 @@ def log_round_to_wandb(
     increment_table = wandb_module.Table(
         columns=[
             "interval",
+            "raw_energy_increment",
             "energy_increment",
+            "raw_length_increment",
             "length_increment",
+            "was_clipped",
             "v_infinity",
         ]
     )
     for interval_index in range(diagnostics.energy_increments.size):
         increment_table.add_data(
             interval_index,
+            float(diagnostics.raw_energy_increments[interval_index]),
             float(diagnostics.energy_increments[interval_index]),
+            float(diagnostics.raw_length_increments[interval_index]),
             float(diagnostics.length_increments[interval_index]),
+            bool(
+                diagnostics.length_increments[interval_index]
+                < diagnostics.raw_length_increments[interval_index]
+            ),
             float(diagnostics.v_infinity[interval_index]),
         )
 
@@ -538,8 +564,19 @@ def log_round_to_wandb(
     wandb_module.log(
         {
             "round/index": round_index,
+            "round/raw_total_energy": diagnostics.raw_total_energy,
             "round/total_energy": diagnostics.total_energy,
+            "round/raw_total_length": diagnostics.raw_total_length,
             "round/total_length": diagnostics.total_length,
+            "round/length_increment_clip_multiple": (
+                diagnostics.length_increment_clip_multiple
+            ),
+            "round/length_increment_clip_threshold": (
+                diagnostics.length_increment_clip_threshold
+            ),
+            "round/num_length_increments_clipped": (
+                diagnostics.num_length_increments_clipped
+            ),
             "round/schedule_change_rms": float(
                 np.sqrt(np.mean(schedule_change**2))
             ),
@@ -583,17 +620,32 @@ def log_round_to_wandb(
                 "normalized_cumulative_length",
                 title=f"Normalized cumulative length round {round_index}",
             ),
-            "round/energy_increments": wandb_module.plot.line(
-                increment_table,
-                "interval",
-                "energy_increment",
+            "round/increment_table": increment_table,
+            "round/energy_increments": wandb_module.plot.line_series(
+                xs=[
+                    np.arange(diagnostics.energy_increments.size),
+                    np.arange(diagnostics.energy_increments.size),
+                ],
+                ys=[
+                    diagnostics.raw_energy_increments,
+                    diagnostics.energy_increments,
+                ],
+                keys=["raw", "used"],
                 title=f"Energy increments round {round_index}",
+                xname="interval",
             ),
-            "round/length_increments": wandb_module.plot.line(
-                increment_table,
-                "interval",
-                "length_increment",
+            "round/length_increments": wandb_module.plot.line_series(
+                xs=[
+                    np.arange(diagnostics.length_increments.size),
+                    np.arange(diagnostics.length_increments.size),
+                ],
+                ys=[
+                    diagnostics.raw_length_increments,
+                    diagnostics.length_increments,
+                ],
+                keys=["raw", "used"],
                 title=f"Length increments round {round_index}",
+                xname="interval",
             ),
             "round/final_samples": sample_images,
             "round/mean_image": wandb_module.Image(
@@ -615,8 +667,17 @@ def log_run_progress_to_wandb(
     total_energy = np.asarray(
         [item.total_energy for item in diagnostics_history]
     )
+    raw_total_energy = np.asarray(
+        [item.raw_total_energy for item in diagnostics_history]
+    )
     total_length = np.asarray(
         [item.total_length for item in diagnostics_history]
+    )
+    raw_total_length = np.asarray(
+        [item.raw_total_length for item in diagnostics_history]
+    )
+    clipped_count = np.asarray(
+        [item.num_length_increments_clipped for item in diagnostics_history]
     )
     schedules = np.stack(schedule_history)
     schedule_change = schedules[1:] - schedules[:-1]
@@ -626,8 +687,11 @@ def log_run_progress_to_wandb(
     progress_table = wandb_module.Table(
         columns=[
             "round",
+            "raw_total_energy",
             "total_energy",
+            "raw_total_length",
             "total_length",
+            "num_length_increments_clipped",
             "schedule_change_rms",
             "schedule_change_max",
         ]
@@ -635,8 +699,11 @@ def log_run_progress_to_wandb(
     for offset, round_index in enumerate(round_indices):
         progress_table.add_data(
             round_index,
+            float(raw_total_energy[offset]),
             float(total_energy[offset]),
+            float(raw_total_length[offset]),
             float(total_length[offset]),
+            int(clipped_count[offset]),
             float(schedule_change_rms[offset]),
             float(schedule_change_max[offset]),
         )
@@ -654,11 +721,20 @@ def log_run_progress_to_wandb(
     wandb_module.log(
         {
             "progress/round": round_indices[-1],
+            "progress/latest_raw_total_energy": float(
+                raw_total_energy[latest_offset]
+            ),
             "progress/latest_total_energy": float(
                 total_energy[latest_offset]
             ),
+            "progress/latest_raw_total_length": float(
+                raw_total_length[latest_offset]
+            ),
             "progress/latest_total_length": float(
                 total_length[latest_offset]
+            ),
+            "progress/latest_num_length_increments_clipped": int(
+                clipped_count[latest_offset]
             ),
             "progress/latest_schedule_change_rms": float(
                 schedule_change_rms[latest_offset]
@@ -675,17 +751,19 @@ def log_run_progress_to_wandb(
                 title="Schedule progression across rounds",
                 xname="schedule node",
             ),
-            "progress/total_energy": wandb_module.plot.line(
-                progress_table,
-                "round",
-                "total_energy",
+            "progress/total_energy": wandb_module.plot.line_series(
+                xs=[round_indices, round_indices],
+                ys=[raw_total_energy, total_energy],
+                keys=["raw", "used"],
                 title="Total energy across rounds",
+                xname="round",
             ),
-            "progress/total_length": wandb_module.plot.line(
-                progress_table,
-                "round",
-                "total_length",
+            "progress/total_length": wandb_module.plot.line_series(
+                xs=[round_indices, round_indices],
+                ys=[raw_total_length, total_length],
+                keys=["raw", "used"],
                 title="Total length across rounds",
+                xname="round",
             ),
             "progress/schedule_change_rms": wandb_module.plot.line(
                 progress_table,
@@ -843,6 +921,9 @@ def main() -> None:
                 sigma=speed_arrays["sigma"],
                 v_eff=speed_arrays["v_eff"],
                 v_dom=speed_arrays["v_dom"],
+                length_increment_clip_multiple=(
+                    args.length_increment_clip_multiple
+                ),
             )
 
             round_directory = save_round_artifacts(
@@ -879,8 +960,21 @@ def main() -> None:
                 round_indices=round_indices,
             )
 
-            print(f"Energy: {diagnostics.total_energy:.6g}")
-            print(f"Length: {diagnostics.total_length:.6g}")
+            print(
+                "Energy (raw/used): "
+                f"{diagnostics.raw_total_energy:.6g}/"
+                f"{diagnostics.total_energy:.6g}"
+            )
+            print(
+                "Length (raw/used): "
+                f"{diagnostics.raw_total_length:.6g}/"
+                f"{diagnostics.total_length:.6g}"
+            )
+            print(
+                "Length increments clipped: "
+                f"{diagnostics.num_length_increments_clipped} "
+                f"(threshold={diagnostics.length_increment_clip_threshold:.6g})"
+            )
             print(f"Saved round artifacts to: {round_directory}")
         if args.wandb_log_artifacts:
             log_run_artifact(
