@@ -1,0 +1,195 @@
+ULA-img-sampling: Isambard setup and run guide
+================================================
+
+This workflow uses Isambard login-node commands and Slurm batch jobs. No
+interactive GPU shell is required.
+
+
+1. Clone or update the repository
+---------------------------------
+
+For a new checkout:
+
+  mkdir -p "$PROJECTDIR/$USER"
+  cd "$PROJECTDIR/$USER"
+  git clone https://github.com/Chr1sWilliams/ULA-img-sampling.git
+  cd ULA-img-sampling
+  git switch main
+
+For an existing checkout:
+
+  cd "$PROJECTDIR/$USER/ULA-img-sampling"
+  git pull --ff-only
+
+Confirm that the Isambard environment definition is present:
+
+  test -f environment-isambard-aarch64.yml
+
+
+2. Create or update the environment without an interactive shell
+----------------------------------------------------------------
+
+The first setup pass can disable W&B while the environment is being created:
+
+  cd "$PROJECTDIR/$USER/ULA-img-sampling"
+  WANDB_MODE=disabled ./setup_isambard.sh
+
+The command prints a Slurm job ID. Monitor it with:
+
+  squeue --me
+  tail -f slurm/logs/ula_env_setup_JOBID.out
+
+Replace JOBID with the number printed by sbatch. Wait for this line:
+
+  Environment setup and verification completed successfully.
+
+The default environment location is:
+
+  $PROJECTDIR/$USER/conda-envs/ula-prior
+
+
+3. Log in to Weights & Biases (required)
+-----------------------------------------
+
+You must log in to W&B before online sampling. Do this once on an Isambard
+login node after the environment has been created:
+
+  source "$HOME/miniforge3/etc/profile.d/conda.sh"
+  conda activate "$PROJECTDIR/$USER/conda-envs/ula-prior"
+  wandb login
+
+Paste your W&B API key when prompted. Confirm the login with:
+
+  wandb status
+
+The sampling launcher defaults to the W&B project "bh_sampling". To use the
+existing account and entity explicitly:
+
+  export WANDB_PROJECT=bh_sampling
+  export WANDB_ENTITY=chr1s
+
+For a completely non-interactive W&B login, securely provide WANDB_API_KEY in
+the submission environment instead of running "wandb login". Do not commit an
+API key to Git.
+
+
+4. Run the online environment check
+-----------------------------------
+
+After W&B login, submit the setup/check job once more in online mode:
+
+  cd "$PROJECTDIR/$USER/ULA-img-sampling"
+  WANDB_MODE=online \
+  WANDB_PROJECT=bh_sampling \
+  WANDB_ENTITY=chr1s \
+  ./setup_isambard.sh
+
+Monitor its log as above. This check verifies:
+
+  - package consistency;
+  - CUDA and the allocated GH200 GPU;
+  - torchkbnufft on the GPU;
+  - the diffusion model checkpoint;
+  - both day-095 high- and low-band EHT likelihoods and gradients;
+  - online W&B logging.
+
+
+5. Optional small sampling smoke test
+-------------------------------------
+
+Submit a minimal high-band run before the full experiment:
+
+  cd "$PROJECTDIR/$USER/ULA-img-sampling"
+  export CONDA_ENV="$PROJECTDIR/$USER/conda-envs/ula-prior"
+  export CONDA_SH="$HOME/miniforge3/etc/profile.d/conda.sh"
+  export WANDB_PROJECT=bh_sampling
+  export WANDB_ENTITY=chr1s
+
+  mkdir -p slurm/logs
+
+  NUM_SCHEDULE_POINTS=2 \
+  NUM_ROUNDS=1 \
+  NUM_SAMPLES=1 \
+  CORRECTOR_STEPS=0 \
+  LOG_INTERVAL=1 \
+  sbatch --array=0 --time=00:20:00 slurm/run_eht_095.sh
+
+Array task 0 uses the day-095 high-band file.
+
+
+6. Launch the full day-095 experiment
+-------------------------------------
+
+  cd "$PROJECTDIR/$USER/ULA-img-sampling"
+  export CONDA_ENV="$PROJECTDIR/$USER/conda-envs/ula-prior"
+  export CONDA_SH="$HOME/miniforge3/etc/profile.d/conda.sh"
+  export WANDB_PROJECT=bh_sampling
+  export WANDB_ENTITY=chr1s
+
+  mkdir -p slurm/logs
+  sbatch slurm/run_eht_095.sh
+
+To cap unusually large schedule-learning length increments at, for example,
+five times their raw mean, launch with:
+
+  LENGTH_INCREMENT_CLIP_MULTIPLE=5 sbatch slurm/run_eht_095.sh
+
+The default is "inf", which disables clipping. Raw and clipped diagnostics are
+both saved. You may also set NUM_SCHEDULE_POINTS to a different number when
+loading a learned schedule; it is linearly interpolated to the requested count
+and its endpoints are preserved.
+
+The launcher submits two array tasks:
+
+  task 0: SR1_M87_2017_095_hi_hops_netcal_StokesI.uvfits
+  task 1: SR1_M87_2017_095_lo_hops_netcal_StokesI.uvfits
+
+Each task requests one GPU and can run for up to 24 hours.
+
+
+7. Monitor jobs and results
+---------------------------
+
+List active jobs:
+
+  squeue --me
+
+Follow the output logs, replacing JOBID with the submitted array job ID:
+
+  tail -f slurm/logs/eht_095_JOBID_0.out
+  tail -f slurm/logs/eht_095_JOBID_1.out
+
+Inspect completed job status:
+
+  sacct -j JOBID --format=JobID,State,Elapsed,ExitCode
+
+Retained samples and diagnostics are stored under:
+
+  $PROJECTDIR/$USER/ula-img-sampling-runs/eht-095/
+
+Resolved environment exports are stored under:
+
+  $PROJECTDIR/$USER/ula-img-sampling-env-exports/
+
+W&B records live sampling diagnostics, schedule progression, energy and
+length across rounds, sample previews, GPU memory, and the completed run
+artifact.
+
+
+8. Estimate consistency without the training set
+-------------------------------------------------
+
+The model-only job generates 1000 unconditional samples, estimates the
+sigma-squared weighted adjacent-score schedule used by the trainer, generates
+a fresh 1000 samples with the optimized reverse-SDE schedule, and uses those
+samples for the consistency threshold.
+
+Run only the day-095 high-band likelihood with:
+
+  cd "$PROJECTDIR/$USER/ULA-img-sampling"
+  mkdir -p slurm/logs
+  sbatch --array=0 slurm/run_model_consistency.sh
+
+Remove "--array=0" to submit both high- and low-band array tasks. Useful
+overrides are NUM_SAMPLES, BATCH_SIZE, NUM_GRID_POINTS, ETA_TOLERANCE,
+SCHEDULE_UPDATE_RATE, OUTPUT_ROOT, and SEED.
