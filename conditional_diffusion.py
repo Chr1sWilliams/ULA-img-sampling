@@ -65,6 +65,8 @@ class DiffusionGuidance:
         cutoff: float = 1.0 - np.exp(-0.5),
     ) -> th.Tensor:
         """Return the bounded likelihood-guidance schedule from the preprint."""
+        if not 0.0 < cutoff < 1.0:
+            raise ValueError("cutoff must lie strictly between zero and one.")
         noising = 1.0 - th.exp(-0.5 * diffusion_time)
         return th.clamp(1.0 - noising / cutoff, min=0.0)
 
@@ -97,6 +99,80 @@ class DiffusionGuidance:
         diffusion.omega_end = diffusion.omega[-1]
         diffusion.update_alpha()
         return model, diffusion
+
+    def compute_prior_score(
+        self,
+        noisy_images: th.Tensor,
+        schedule_values: th.Tensor,
+    ) -> th.Tensor:
+        """Evaluate the unconditional diffusion-prior score at X_s."""
+        if noisy_images.ndim != 4:
+            raise ValueError(
+                "noisy_images must have shape (B, C, H, W), got "
+                f"{tuple(noisy_images.shape)}"
+            )
+        schedule_values = schedule_values.to(
+            device=noisy_images.device,
+            dtype=noisy_images.dtype,
+        ).reshape(-1)
+        if schedule_values.shape != (noisy_images.shape[0],):
+            raise ValueError("schedule_values must contain one value per image.")
+        if th.any(schedule_values <= 0.0) or th.any(schedule_values >= 1.0):
+            raise ValueError("schedule_values must lie strictly between zero and one.")
+
+        signal_coefficient = self.alpha(schedule_values)
+        noise_scale = th.sqrt(1.0 - signal_coefficient).view(-1, 1, 1, 1)
+        diffusion_times = self.diffusion_time(schedule_values)
+        return -self.model(noisy_images, diffusion_times) / noise_scale
+
+    def tweedie_denoise(
+        self,
+        noisy_images: th.Tensor,
+        schedule_values: th.Tensor,
+        prior_score: Optional[th.Tensor] = None,
+    ) -> th.Tensor:
+        """Return the Tweedie clean-image estimate from X_s."""
+        schedule_values = schedule_values.to(
+            device=noisy_images.device,
+            dtype=noisy_images.dtype,
+        ).reshape(-1)
+        if schedule_values.shape != (noisy_images.shape[0],):
+            raise ValueError("schedule_values must contain one value per image.")
+        if th.any(schedule_values <= 0.0) or th.any(schedule_values >= 1.0):
+            raise ValueError("schedule_values must lie strictly between zero and one.")
+        if prior_score is None:
+            prior_score = self.compute_prior_score(
+                noisy_images,
+                schedule_values,
+            )
+        if prior_score.shape != noisy_images.shape:
+            raise ValueError("prior_score must have the same shape as noisy_images.")
+
+        signal_coefficient = self.alpha(schedule_values)
+        inverse_signal_scale = th.rsqrt(signal_coefficient).view(-1, 1, 1, 1)
+        noise_variance = (1.0 - signal_coefficient).view(-1, 1, 1, 1)
+        return inverse_signal_scale * (
+            noisy_images + noise_variance * prior_score
+        )
+
+    def compute_likelihood_score(self, clean_images: th.Tensor) -> th.Tensor:
+        """Evaluate grad_x log L(y|x) in the model's [-1, 1] image coordinates."""
+        images = clean_images.detach().requires_grad_(True)
+        positive_images = th.clamp(images + 1.0, min=1e-15)
+        log_likelihood = self.log_likelihood(positive_images)
+        if not isinstance(log_likelihood, th.Tensor):
+            raise TypeError("log_likelihood must return a torch.Tensor.")
+        expected_shape = (images.shape[0],)
+        if log_likelihood.shape != expected_shape:
+            raise ValueError(
+                "log_likelihood must return one value per sample with shape "
+                f"{expected_shape}, got {tuple(log_likelihood.shape)}"
+            )
+        return th.autograd.grad(
+            outputs=log_likelihood,
+            inputs=images,
+            grad_outputs=th.ones_like(log_likelihood),
+        )[0].detach()
 
     def compute_langevin_speeds(
         self,
@@ -218,11 +294,7 @@ class DiffusionGuidance:
             device=noisy_images.device,
             dtype=noisy_images.dtype,
         )
-        signal_coefficient = self.alpha(schedule_values)
-        noise_scale = th.sqrt(1.0 - signal_coefficient).view(-1, 1, 1, 1)
-        inverse_signal_scale = th.rsqrt(signal_coefficient).view(-1, 1, 1, 1)
-        diffusion_times = self.diffusion_time(schedule_values)
-        prior_score = -self.model(noisy_images, diffusion_times) / noise_scale
+        prior_score = self.compute_prior_score(noisy_images, schedule_values)
 
         if unconditional:
             likelihood_guidance = th.zeros_like(noisy_images)
@@ -235,8 +307,10 @@ class DiffusionGuidance:
                 clean_estimate,
             )
 
-        clean_estimate = inverse_signal_scale * (
-            noisy_images + noise_scale.square() * prior_score
+        clean_estimate = self.tweedie_denoise(
+            noisy_images,
+            schedule_values,
+            prior_score=prior_score,
         )
         positive_clean_estimate = th.clamp(clean_estimate + 1.0, min=1e-15)
         log_likelihood = self.log_likelihood(positive_clean_estimate)
