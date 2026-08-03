@@ -8,8 +8,8 @@
 #   pip install -r requirements-pip.txt
 
 # ---- Core: needed for UNCONDITIONAL (prior-only, --log_likelihood zero) ----
-torch==2.9.1
-torchvision==0.24.1
+torch==2.9.1+cu128
+torchvision==0.24.1+cu128
 blobfile==3.1.0
 wandb==0.23.0
 matplotlib==3.10.8
