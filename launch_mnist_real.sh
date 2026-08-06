@@ -15,9 +15,9 @@ MNIST_LIMIT="${MNIST_LIMIT:-10000}"
   --limit "${MNIST_LIMIT}"
 
 export DATA_DIR="${MNIST_IMAGE_DIR}"
-export OUTPUT_DIR="${OUTPUT_DIR:-${PROJECT_DIR}/outputs/mnist_real}"
+export OUTPUT_DIR="${OUTPUT_DIR:-${PROJECT_DIR}/outputs/mnist_real_fixed}"
 export TRAIN_STEPS="${TRAIN_STEPS:-5000}"
-export BATCH_SIZE="${BATCH_SIZE:-64}"
+export BATCH_SIZE="${BATCH_SIZE:-1024}"
 export SAVE_INTERVAL="${SAVE_INTERVAL:-500}"
 export IMAGE_CHANNELS=1
 export NOISE_SCHEDULE="${NOISE_SCHEDULE:-cosine}"

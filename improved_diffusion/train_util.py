@@ -53,6 +53,17 @@ if dist_util.dev() == th.device('cuda:0'):
 INITIAL_LOG_LOSS_SCALE = 20.0
 
 
+def _line_plot_image(values, title):
+    fig, ax = plt.subplots()
+    ax.plot(range(len(values)), values)
+    ax.set_title(title)
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    image = wandb.Image(fig)
+    plt.close(fig)
+    return image
+
+
 class TrainLoop:
     def __init__(
         self,
@@ -210,33 +221,16 @@ class TrainLoop:
                 # print(self.diffusion.Lambda)
 
                 betas = self.diffusion.betas
-                data_table = wandb.Table(columns=["x", "y"])
-                for i, beta in enumerate(betas):
-                    data_table.add_data(i, beta)
-                wandb.log({"betas_plot": wandb.plot.line(data_table, "x", "y", title="Betas Vector")})
+                wandb.log({"betas_plot": _line_plot_image(betas, "Betas Vector")})
 
                 omega = self.diffusion.omega
-                data_table = wandb.Table(columns=["x", "y"])
-                for i, om in enumerate(omega):
-                    data_table.add_data(i, om)
-                wandb.log({"omega_plot": wandb.plot.line(data_table, "x", "y", title="Omega Vector")})
-
-
+                wandb.log({"omega_plot": _line_plot_image(omega, "Omega Vector")})
 
                 lambda_incre = self.diffusion.lambda_increments
-                data_table = wandb.Table(columns=["x", "y"])
-                for i, lam in enumerate(lambda_incre):
-                    data_table.add_data(i, lam)
-
-                wandb.log({"lambda_plot": wandb.plot.line(data_table, "x", "y", title="Lambda Vector")})
+                wandb.log({"lambda_plot": _line_plot_image(lambda_incre, "Lambda Vector")})
 
                 energy_incre = self.diffusion.energy_increments
-                data_table = wandb.Table(columns=["x", "y"])
-                for i, lam in enumerate(energy_incre):
-                    data_table.add_data(i, lam)
-
-                
-                wandb.log({"energy_plot": wandb.plot.line(data_table, "x", "y", title="Energy Vector")})
+                wandb.log({"energy_plot": _line_plot_image(energy_incre, "Energy Vector")})
 
                 # Log the line plot of betas using the wandb.Table
                 wandb.log({"lambda": self.diffusion.Lambda})
