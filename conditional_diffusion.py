@@ -13,6 +13,7 @@ from improved_diffusion.script_util import (
     model_and_diffusion_defaults,
 )
 from likelihoods import LogLikelihood, zero_log_likelihood
+from model_schedule import install_diffusion_schedule
 
 
 Scalar = Union[float, th.Tensor]
@@ -86,11 +87,11 @@ class DiffusionGuidance:
         model = model.to(device)
         model.eval()
 
-        diffusion.omega = np.load(omega_path)
-        diffusion.betas = np.load(beta_path)
-        diffusion.omega_start = diffusion.omega[0]
-        diffusion.omega_end = diffusion.omega[-1]
-        diffusion.update_alpha()
+        install_diffusion_schedule(
+            diffusion,
+            omega=np.load(omega_path),
+            betas=np.load(beta_path),
+        )
         return model, diffusion
 
     def compute_prior_score(

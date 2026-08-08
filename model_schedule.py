@@ -27,6 +27,51 @@ class ModelScheduleEstimate:
     update_rate: float
 
 
+def install_diffusion_schedule(
+    diffusion: Any,
+    *,
+    omega: np.ndarray,
+    betas: np.ndarray,
+) -> None:
+    """Install matching model-time and beta arrays on a diffusion object.
+
+    The base diffusion is constructed before the learned schedule is loaded,
+    so its original ``num_timesteps`` and bookkeeping tensors may have a
+    different length. Keep those fields synchronized with the installed
+    arrays before reverse-SDE sampling starts.
+    """
+    omega = np.asarray(omega, dtype=np.float64).reshape(-1)
+    betas = np.asarray(betas, dtype=np.float64).reshape(-1)
+    if omega.size < 2:
+        raise ValueError("omega and betas must contain at least two values.")
+    if omega.shape != betas.shape:
+        raise ValueError("omega and betas must have equal lengths.")
+    if not np.all(np.isfinite(omega)) or np.any(omega <= 0.0):
+        raise ValueError("omega must contain finite positive values.")
+    if np.any(np.diff(omega) <= 0.0):
+        raise ValueError("omega must be strictly increasing.")
+    if not np.all(np.isfinite(betas)) or np.any(betas <= 0.0):
+        raise ValueError("betas must contain finite positive values.")
+    if np.any(betas >= 1.0):
+        raise ValueError("betas must be strictly less than one.")
+
+    diffusion.omega = omega.copy()
+    diffusion.betas = betas.copy()
+    diffusion.num_timesteps = int(omega.size)
+    diffusion.omega_start = float(omega[0])
+    diffusion.omega_end = float(omega[-1])
+    diffusion.update_alpha()
+
+    for name in ("lambda_increments", "energy_increments", "D", "D2"):
+        current = getattr(diffusion, name, None)
+        if isinstance(current, th.Tensor):
+            setattr(diffusion, name, current.new_zeros(diffusion.num_timesteps))
+    current_n_time = getattr(diffusion, "n_time", None)
+    if isinstance(current_n_time, th.Tensor):
+        diffusion.n_time = current_n_time.new_zeros(diffusion.num_timesteps)
+        diffusion.n_time[0] = 1
+
+
 def vp_betas_from_omega(omega: np.ndarray) -> np.ndarray:
     """Convert increasing VP integrated-noise times to exact discrete betas."""
     omega = np.asarray(omega, dtype=np.float64).reshape(-1)
@@ -222,11 +267,11 @@ def estimate_model_schedule(
 
 def apply_model_schedule(diffusion: Any, estimate: ModelScheduleEstimate) -> None:
     """Install an optimized model-time schedule for reverse-SDE sampling."""
-    diffusion.omega = estimate.optimized_omega.copy()
-    diffusion.betas = estimate.optimized_betas.copy()
-    diffusion.omega_start = float(diffusion.omega[0])
-    diffusion.omega_end = float(diffusion.omega[-1])
-    diffusion.update_alpha()
+    install_diffusion_schedule(
+        diffusion,
+        omega=estimate.optimized_omega,
+        betas=estimate.optimized_betas,
+    )
 
 
 def generate_reverse_sde_samples(

@@ -5,6 +5,7 @@ import torch as th
 
 from model_schedule import (
     estimate_model_schedule,
+    install_diffusion_schedule,
     schedule_from_weighted_score_energy,
     vp_betas_from_omega,
 )
@@ -29,7 +30,47 @@ class DummyDiffusion:
         self.alphas_cumprod = np.asarray([0.9, 0.7, 0.4], dtype=np.float64)
 
 
+class InstallableDiffusion:
+    def __init__(self):
+        self.num_timesteps = 1000
+        self.lambda_increments = th.ones(1000)
+        self.energy_increments = th.ones(1000)
+        self.D = th.ones(1000)
+        self.D2 = th.ones(1000)
+        self.n_time = th.ones(1000, dtype=th.int64)
+
+    def update_alpha(self):
+        self.alphas_cumprod = np.cumprod(1.0 - self.betas)
+
+
 class ModelScheduleTests(unittest.TestCase):
+    def test_install_schedule_updates_loaded_timestep_count(self):
+        diffusion = InstallableDiffusion()
+        omega = np.asarray([0.1, 0.3, 0.7], dtype=np.float64)
+        betas = np.asarray([0.05, 0.1, 0.2], dtype=np.float64)
+
+        install_diffusion_schedule(diffusion, omega=omega, betas=betas)
+
+        self.assertEqual(diffusion.num_timesteps, 3)
+        np.testing.assert_array_equal(diffusion.omega, omega)
+        np.testing.assert_array_equal(diffusion.betas, betas)
+        np.testing.assert_allclose(
+            diffusion.alphas_cumprod,
+            np.cumprod(1.0 - betas),
+        )
+        for name in ("lambda_increments", "energy_increments", "D", "D2"):
+            self.assertEqual(getattr(diffusion, name).shape, (3,))
+        self.assertEqual(diffusion.n_time.shape, (3,))
+        self.assertEqual(diffusion.n_time[0].item(), 1)
+
+    def test_install_schedule_rejects_mismatched_lengths(self):
+        with self.assertRaisesRegex(ValueError, "equal lengths"):
+            install_diffusion_schedule(
+                InstallableDiffusion(),
+                omega=np.asarray([0.1, 0.3, 0.7]),
+                betas=np.asarray([0.1, 0.2]),
+            )
+
     def test_exact_vp_betas_reproduce_integrated_noise_time(self):
         omega = np.asarray([0.1, 0.3, 1.2], dtype=np.float64)
         betas = vp_betas_from_omega(omega)
